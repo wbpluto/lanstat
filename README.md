@@ -6,6 +6,8 @@ Lightweight, single-binary native C11 real-time LAN bandwidth monitor for OpenWr
 
 See **which device is using your bandwidth every second** — with ~1.8 MB RAM usage, zero flash writes, and zero external runtime dependencies.
 
+![lanstat Live Bandwidth Monitor](docs/screenshot-en.png)
+
 ## Features
 
 - **Ultra-Low Footprint**: Single-threaded C11 binary (~1.8 MB RSS), pure in-memory counters with **zero flash writes** for 24/7 operation.
