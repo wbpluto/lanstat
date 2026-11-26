@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-cross-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang shellcheck
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Check Web UI JS syntax
+        run: make check-js
+
+      - name: Verify embedded web assets are up to date
+        run: |
+          python3 scripts/embed_web.py web/index.html src/web_assets.h
+          git diff --exit-code src/web_assets.h
+
+      - name: Run host unit tests (ASan + UBSan)
+        run: make test CC_HOST=clang
+
+      - name: Lint shell scripts
+        run: |
+          shellcheck openwrt/install-router.sh openwrt/rollback-router.sh
+          sh -n openwrt/etc/init.d/lanstat
+          sh -n openwrt-package/lanstat/files/lanstat.init
+
+      - name: Cross-compile all 5 OpenWrt architectures (-Werror)
+        run: make check-arches
+
+      - name: List built binaries
+        run: ls -lh dist/arch-check/

@@ -1,0 +1,8 @@
+{
+	"lanstat": {
+		"description": "Allow LuCI to read lanstat listening port",
+		"read": {
+			"uci": [ "lanstat" ]
+		}
+	}
+}

@@ -1,0 +1,2322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1120" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>OpenWRT 实时带宽监控 · lanstat</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1120;
+      --panel: #111827;
+      --panel-2: #1e293b;
+      --border: #263349;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --dl: #38bdf8;
+      --ul: #34d399;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --accent: #6366f1;
+      --pps: #2dd4bf;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .container {
+      max-width: 1380px; margin: 0 auto;
+      padding: max(18px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(36px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+    }
+    header {
+      display: flex; flex-wrap: wrap; align-items: center;
+      justify-content: space-between; gap: 12px; margin-bottom: 16px;
+    }
+    .title-wrap h1 {
+      margin: 0; font-size: 20px; font-weight: 700;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .title-ver {
+      font-size: 12px; font-weight: 500; color: var(--muted);
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1px 7px; letter-spacing: 0.2px;
+      cursor: help;
+    }
+    .title-repo {
+      font-size: 12px; font-weight: 500; color: var(--muted);
+      text-decoration: none;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1px 7px; letter-spacing: 0.2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .title-repo:hover { color: var(--dl); border-color: var(--dl); }
+    .status-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--ul); box-shadow: 0 0 8px var(--ul); display: inline-block;
+    }
+    .status-dot.paused { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+    .status-dot.error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+    .subtitle { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    select, input, button {
+      background: var(--panel); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 7px 11px; font-size: 13px; outline: none;
+    }
+    input[type="search"] { -webkit-appearance: none; appearance: none; }
+    button, a, th, tbody tr {
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    button { cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+    button:hover { border-color: var(--dl); background: var(--panel-2); }
+    button.active { border-color: var(--accent); background: rgba(99, 102, 241, 0.22); }
+    .seg-switch {
+      position: relative;
+      display: inline-grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      align-items: stretch;
+      height: 32px;
+      padding: 2px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+      user-select: none;
+      vertical-align: middle;
+      transition: border-color 0.15s;
+    }
+    .seg-switch.lang-switch {
+      grid-template-columns: repeat(4, 27px);
+    }
+    .seg-switch.range-switch {
+      grid-template-columns: repeat(4, minmax(48px, 1fr));
+      height: 30px;
+      background: var(--bg);
+    }
+    .seg-thumb {
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      left: 2px;
+      width: calc((100% - 4px) / 4);
+      border-radius: 5px;
+      background: var(--accent);
+      box-shadow: 0 1px 4px rgba(99, 102, 241, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .seg-switch[data-idx="0"] .seg-thumb { transform: translateX(0%); }
+    .seg-switch[data-idx="1"] .seg-thumb { transform: translateX(100%); }
+    .seg-switch[data-idx="2"] .seg-thumb { transform: translateX(200%); }
+    .seg-switch[data-idx="3"] .seg-thumb { transform: translateX(300%); }
+    .seg-opt {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      margin: 0;
+      border: none;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11.5px;
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: -0.2px;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: color 0.18s ease;
+    }
+    .range-switch .seg-opt {
+      padding: 0 10px;
+      font-size: 12px;
+      letter-spacing: 0;
+    }
+    .seg-opt + .seg-opt::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 22%;
+      bottom: 22%;
+      width: 1px;
+      background: rgba(148, 163, 184, 0.2);
+      transition: opacity 0.15s ease;
+      pointer-events: none;
+    }
+    .seg-opt.active::before,
+    .seg-opt.active + .seg-opt::before {
+      opacity: 0;
+    }
+    .seg-opt:hover,
+    .seg-opt.active,
+    .seg-opt.active:hover {
+      border-color: transparent;
+      background: transparent;
+    }
+    .seg-opt.active,
+    .seg-opt.active:hover {
+      color: #fff;
+    }
+    .seg-opt:focus-visible {
+      outline: 2px solid var(--dl);
+      outline-offset: -2px;
+    }
+    @media (hover: hover) {
+      .seg-switch:hover { border-color: var(--dl); }
+      .seg-opt:hover { color: var(--text); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .seg-thumb { transition: none; }
+    }
+    .kpis {
+      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px; margin-bottom: 14px;
+    }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px 16px; min-width: 0;
+    }
+    @media (max-width: 900px) {
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 319px) {
+      .kpis { grid-template-columns: 1fr; }
+    }
+    .kpi-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .kpi-value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .dl-color { color: var(--dl); }
+    .ul-color { color: var(--ul); }
+    .chart-card { margin-bottom: 14px; position: relative; }
+    .chart-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px; font-size: 13px; gap: 10px; flex-wrap: wrap;
+    }
+    .chart-title-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .legend { display: inline-flex; gap: 12px; font-size: 12px; color: var(--muted); align-items: center; margin-left: 2px; }
+    .legend span::before {
+      content: ""; display: inline-block; width: 10px; height: 10px;
+      border-radius: 2px; margin-right: 5px; vertical-align: -1px;
+    }
+    .legend .l-dl::before { background: var(--dl); }
+    .legend .l-ul::before { background: var(--ul); }
+    .chart-hover { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; min-width: 170px; text-align: right; }
+    #deviceChartCard .chart-header { padding-right: 34px; }
+    .chart-close-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      line-height: 1;
+      border-radius: 6px;
+    }
+    .chart-stats {
+      display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+      font-size: 12px; color: var(--muted); margin: -2px 0 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-stats strong { color: var(--text); font-weight: 600; }
+    svg.chart { width: 100%; height: 160px; display: block; cursor: crosshair; touch-action: pan-y; }
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      justify-content: space-between; margin-bottom: 10px;
+    }
+    .toolbar-left, .toolbar-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .search-input { min-width: 220px; }
+    .table-wrap {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; width: 100%; overflow: hidden;
+    }
+    table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+    th, td {
+      padding: 9px 8px; text-align: left; border-bottom: 1px solid var(--border);
+      white-space: normal; word-wrap: break-word; word-break: break-word; overflow-wrap: anywhere; vertical-align: middle;
+    }
+    th:nth-child(1), td:nth-child(1) { width: 26%; }
+    th:nth-child(2), td:nth-child(2) { width: 11%; }
+    th:nth-child(3), td:nth-child(3) { width: 11%; }
+    th:nth-child(4), td:nth-child(4) { width: 10.5%; }
+    th:nth-child(5), td:nth-child(5) { width: 10.5%; }
+    th:nth-child(6), td:nth-child(6) { width: 10.5%; }
+    th:nth-child(7), td:nth-child(7) { width: 11%; }
+    th:nth-child(8), td:nth-child(8) { width: 9.5%; }
+    .dev-name, .dev-sub { word-break: break-word; }
+    th {
+      color: var(--muted); font-weight: 600; font-size: 12px; cursor: pointer;
+      user-select: none; background: rgba(15, 23, 42, 0.6);
+    }
+    th:hover { color: var(--text); }
+    th.sort-active { color: var(--dl); font-weight: 700; }
+    .sort-arrow { font-size: 10px; margin-left: 3px; }
+    .sort-part { color: var(--muted); font-weight: 600; }
+    .sort-part.active { color: var(--dl); font-weight: 700; }
+    th.num, td.num { text-align: right; }
+    tbody tr { cursor: pointer; transition: background 0.12s; }
+    tbody tr:hover { background: rgba(56, 189, 248, 0.06); }
+    tbody tr.selected { background: rgba(99, 102, 241, 0.14); }
+    .dev-name { font-weight: 600; color: var(--text); }
+    .dev-sub { font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .bar-bg {
+      width: 100%; max-width: 72px; height: 5px; background: var(--panel-2); border-radius: 99px;
+      overflow: hidden; display: block; margin: 4px 0 0 auto;
+    }
+    @media (max-width: 760px) {
+      .container {
+        padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+      }
+      .kpis { gap: 8px; }
+      .kpis .card { padding: 11px 12px; }
+      .kpi-label { font-size: 11.5px; margin-bottom: 4px; }
+      .kpi-value { font-size: 20px; line-height: 1.2; }
+      .kpi-sub { font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+      select, input { font-size: 16px; }
+      .seg-switch.lang-switch { grid-template-columns: repeat(4, 31px); height: 34px; }
+      .seg-switch.range-switch { height: 32px; }
+      .range-switch .seg-opt { padding: 0 7px; font-size: 11.5px; }
+      .chart-hover { min-width: 0; font-size: 11px; }
+      .search-input { min-width: 0; width: 100%; }
+      table { font-size: 11px; }
+      th, td { padding: 6px 3px; }
+      th { font-size: 10.5px; line-height: 1.25; }
+      .dev-sub { font-size: 10px; line-height: 1.25; }
+      .badge { font-size: 10px; padding: 1px 5px; }
+      .bar-bg { max-width: 100%; }
+    }
+    .bar-fill-dl, .bar-fill-ul, .bar-fill-total, .bar-fill-pps {
+      display: block; height: 100%; border-radius: 99px; transition: width 0.25s;
+    }
+    .bar-fill-dl { background: var(--dl); }
+    .bar-fill-ul { background: var(--ul); }
+    .bar-fill-total { background: var(--accent); }
+    .bar-fill-pps { background: var(--pps); }
+    table.scope-wan .col-pps,
+    table.scope-lan .col-pps { display: none; }
+    .badge {
+      display: inline-block; padding: 2px 7px; border-radius: 999px;
+      font-size: 11px; background: var(--panel-2); color: var(--muted); margin-left: 4px;
+    }
+    .badge.live { background: rgba(52, 211, 153, 0.15); color: var(--ul); margin-left: 0; }
+    .badge.v6 { background: rgba(99, 102, 241, 0.18); color: #a5b4fc; }
+    .alias-btn { padding: 2px 6px; font-size: 11px; margin-left: 6px; opacity: 0.7; }
+    .alias-btn:hover { opacity: 1; }
+    .empty { text-align: center; padding: 28px; color: var(--muted); }
+    .link-btn {
+      text-decoration: none; color: var(--muted); font-size: 12px;
+      border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: var(--panel);
+    }
+    .link-btn:hover { color: var(--text); border-color: var(--dl); }
+    .kpi-label[data-tip] { cursor: help; display: inline-block; }
+    .tooltip {
+      position: fixed; z-index: 9999; pointer-events: none;
+      max-width: 290px; padding: 7px 10px; border-radius: 8px;
+      background: rgba(15, 23, 42, 0.96); color: var(--text);
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      font-size: 12px; line-height: 1.45; white-space: normal;
+      opacity: 0; transform: translateY(4px);
+      transition: opacity 0.12s ease, transform 0.12s ease;
+    }
+    .tooltip.show { opacity: 1; transform: translateY(0); }
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 10000;
+      background: rgba(2, 6, 23, 0.72); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+      display: none; align-items: center; justify-content: center; padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-card {
+      width: 100%; max-width: 960px; max-height: 90vh; max-height: 90dvh; overflow-y: auto;
+      overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      padding: 18px 22px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+    }
+    .help-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+    }
+    .help-sec.full { grid-column: 1 / -1; }
+    @media (max-width: 760px) {
+      .help-grid { grid-template-columns: 1fr; }
+    }
+    .modal-head {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px;
+    }
+    .modal-head h2 { margin: 0; font-size: 16px; }
+    .modal-lead {
+      margin: 0 0 12px; padding: 9px 12px; border-radius: 10px;
+      background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.24);
+      font-size: 13px; line-height: 1.55; color: var(--text);
+    }
+    .help-sec {
+      margin-top: 0; padding: 11px 13px; border-radius: 10px;
+      background: rgba(15, 23, 42, 0.45); border: 1px solid var(--border);
+    }
+    .help-sec.warn {
+      background: rgba(251, 191, 36, 0.06); border-color: rgba(251, 191, 36, 0.28);
+    }
+    .modal-body h3 {
+      margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--dl);
+      letter-spacing: 0.2px;
+    }
+    .help-sec.warn h3 { color: var(--warn); }
+    .modal-body ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+    .modal-body li { margin-bottom: 6px; line-height: 1.55; }
+    .modal-body li:last-child { margin-bottom: 0; }
+    .modal-body strong { color: var(--text); font-weight: 600; }
+    .modal-body code {
+      background: var(--panel-2); color: var(--text); padding: 1px 5px; border-radius: 4px; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title-wrap">
+        <h1>
+          <span id="statusDot" class="status-dot" data-tip="运行状态指示灯：绿色表示正常每秒轮询，黄色表示已暂停刷新，红色表示连接路由器接口失败"></span>
+          <span id="mainTitle">lanstat 实时带宽监控</span>
+          <span class="title-ver" data-tip="本前端页面的修改日期版本号（更新于 2026-11-26）">v26.11.26</span>
+          <a id="repoLink" class="title-repo" href="https://github.com/wbpluto/lanstat" target="_blank" rel="noopener noreferrer" data-tip="访问 lanstat GitHub 项目主页（查看源码、更新与问题反馈）">GitHub</a>
+        </h1>
+        <div class="subtitle" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <select id="ifaceSelect" aria-label="监听接口" style="display:none;padding:2px 6px;font-size:12px" data-tip="选择路由器要监控的局域网接口（如 br-lan），选择后点击右侧“应用”热切换并保存"></select>
+          <button id="ifaceApplyBtn" type="button" style="display:none;padding:2px 8px;font-size:12px" data-tip="确认切换到所选网络接口（热切换，无需重启进程，并自动保存配置）">应用</button>
+          <span id="metaInfo">正在连接路由器 lanstat 原生监控服务...</span>
+        </div>
+      </div>
+      <div class="controls">
+        <a id="luciLink" class="link-btn" href="/cgi-bin/luci/admin/status/lanstat" target="_blank" data-tip="在新标签页打开路由器 80 端口的 LuCI 管理后台">LuCI 后台</a>
+        <div id="langSwitch" class="seg-switch lang-switch" role="radiogroup" aria-label="语言" data-idx="0" data-tip="切换界面语言：简（简体中文）/ 繁（繁體中文）/ EN（English）/ РУ（Русский），默认自动匹配浏览器语言">
+          <span class="seg-thumb" aria-hidden="true"></span>
+          <button class="seg-opt active" type="button" role="radio" aria-checked="true" data-lang="zh" aria-label="简体中文">简</button>
+          <button class="seg-opt" type="button" role="radio" aria-checked="false" data-lang="zh_tw" aria-label="繁體中文">繁</button>
+          <button class="seg-opt" type="button" role="radio" aria-checked="false" data-lang="en" aria-label="English">EN</button>
+          <button class="seg-opt" type="button" role="radio" aria-checked="false" data-lang="ru" aria-label="Русский">РУ</button>
+        </div>
+        <button id="helpBtn" type="button" data-tip="查看主要功能、操作方式及 HWNAT/Flow Offloading 等兼容说明">❓ 使用说明</button>
+        <select id="intervalSelect" aria-label="刷新间隔" data-tip="设置前端自动拉取实时带宽统计的刷新周期，间隔越短越实时">
+          <option value="1000" data-i18n="opt1s" selected>每 1 秒</option>
+          <option value="2000" data-i18n="opt2s">每 2 秒</option>
+          <option value="3000" data-i18n="opt3s">每 3 秒</option>
+          <option value="5000" data-i18n="opt5s">每 5 秒</option>
+        </select>
+        <select id="unitSelect" aria-label="速率单位" data-tip="切换速率单位：Mbps（宽带测速常用）、自动（按大小切换 bps/Kbps/Mbps）、MB/s（文件下载常用）">
+          <option value="mbps" selected>Mbps</option>
+          <option value="auto" data-i18n="optAuto">自动 (Kbps/Mbps)</option>
+          <option value="mbs">MB/s</option>
+        </select>
+        <button id="swapBtn" type="button" data-tip="如发现设备下载与上传方向与实际相反，点击可一键互换显示口径（仅影响页面展示）">↕ 口径: 标准</button>
+        <button id="pauseBtn" type="button" data-tip="暂停或恢复自动轮询刷新，方便定格查看当前设备瞬时速率与排序">⏸ 暂停</button>
+      </div>
+    </header>
+
+    <div class="kpis">
+      <div class="card">
+        <div class="kpi-label" data-i18n="kpiDlLabel" data-tip="全部非路由器局域网设备当前下行带宽之和；下方显示页面打开以来的峰值及 60 秒窗口均值">局域网实时下载</div>
+        <div class="kpi-value dl-color" id="kpiDl">--</div>
+        <div class="kpi-sub" id="kpiDlSub">峰值: --</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label" data-i18n="kpiUlLabel" data-tip="全部非路由器局域网设备当前上行带宽之和；下方显示页面打开以来的峰值及 60 秒窗口均值">局域网实时上传</div>
+        <div class="kpi-value ul-color" id="kpiUl">--</div>
+        <div class="kpi-sub" id="kpiUlSub">峰值: --</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label" data-i18n="kpiActiveLabel" data-tip="最近 60 秒内有数据包收发的局域网终端数量，以及内存池中累计已识别的终端总数">活跃客户端 (≤60s)</div>
+        <div class="kpi-value" id="kpiActive">--</div>
+        <div class="kpi-sub" id="kpiTotalHosts">已记录: --</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label" data-i18n="kpiTotalLabel" data-tip="自本次 lanstat 进程启动以来统计到的局域网总流量（纯内存计数不写闪存），附带内核抓包丢包率">累计转发流量</div>
+        <div class="kpi-value" id="kpiTotalTraffic">--</div>
+        <div class="kpi-sub" id="kpiUptime">运行: --</div>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="chart-header">
+        <div class="chart-title-group">
+          <strong data-i18n="globalChartTitle" data-tip="展示路由器接口全网总下载/上传带宽变化（始终包含内外网总流量，不随下方列表的仅外网/仅内网切换而变化）；悬停可查看数值">全网实时带宽趋势</strong>
+          <div class="seg-switch range-switch" id="rangeTabs" role="radiogroup" aria-label="时间窗口" data-idx="0">
+            <span class="seg-thumb" aria-hidden="true"></span>
+            <button class="seg-opt active" type="button" role="radio" aria-checked="true" tabindex="0" data-range="sec" data-i18n="tabSec" data-tip="按每秒 1 个点展示最近 60 秒瞬时带宽波动">60 秒</button>
+            <button class="seg-opt" type="button" role="radio" aria-checked="false" tabindex="-1" data-range="min" data-i18n="tabMin" data-tip="按每分钟均值展示最近 60 分钟整体带宽趋势">60 分钟</button>
+            <button class="seg-opt" type="button" role="radio" aria-checked="false" tabindex="-1" data-range="hour" data-i18n="tabHour" data-tip="按每小时均值展示最近 24 小时各时段用网高峰">24 小时</button>
+            <button class="seg-opt" type="button" role="radio" aria-checked="false" tabindex="-1" data-range="day" data-i18n="tabDay" data-tip="按每日均值展示最长 31 天的历史带宽趋势（仅存内存，重启清零）">31 天</button>
+          </div>
+          <div class="legend">
+            <span class="l-dl" data-i18n="legendDl">下载</span>
+            <span class="l-ul" data-i18n="legendUl">上传</span>
+          </div>
+        </div>
+        <div class="chart-hover" id="globalHoverInfo"></div>
+      </div>
+      <div class="chart-stats" id="globalRangeStats"></div>
+      <svg id="trendChart" class="chart" viewBox="0 0 900 160" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="card chart-card" id="deviceChartCard" style="display:none;">
+      <button id="closeDeviceChart" class="chart-close-btn" type="button" aria-label="关闭" data-tip="收起当前选中设备的 60 秒独立趋势图（点击图表区域也可关闭）">×</button>
+      <div class="chart-header">
+        <div class="chart-title-group">
+          <strong id="deviceChartTitle" data-tip="展示选中设备的最近 60 秒实时带宽曲线（始终包含内外网总流量，不随下方列表口径切换而变化）">设备实时趋势（最近 60 秒）</strong>
+          <div class="legend">
+            <span class="l-dl" data-i18n="legendDl">下载</span>
+            <span class="l-ul" data-i18n="legendUl">上传</span>
+          </div>
+        </div>
+        <div class="chart-hover" id="deviceHoverInfo"></div>
+      </div>
+      <svg id="deviceChart" class="chart" viewBox="0 0 900 140" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <input id="searchInput" class="search-input" type="search" placeholder="搜索 IP / 主机名 / 备注 / MAC..." data-tip="按 IP、主机名、本地备注或 MAC 实时过滤设备列表（开启隐私保护时按脱敏后文本匹配）" />
+        <button id="groupMacBtn" type="button" data-tip="将同一 MAC 下的 IPv4 与 IPv6 地址合并为一台终端展示，完整列出所有 IP，排序时按 IPv4 地址排列">🧩 合并IPv4/IPv6</button>
+        <button id="scopeBtn" type="button" data-tip="仅针对下方设备列表生效（不影响上方全网汇总与趋势图）；点击循环切换：内外网（全部）→ 仅看外网（扣除内网互传）→ 仅看内网（仅局域网互传）">🌐 流量: 内外网</button>
+        <button id="ipv4OnlyBtn" type="button" data-tip="隐藏 IPv6 地址条目，仅保留 IPv4 设备，减少同一终端的多条重复展示">仅显示 IPv4</button>
+        <button id="includeRouterBtn" type="button" data-tip="默认隐藏路由器自身（.1）地址以免干扰终端排行；开启后可查看路由器本体收发流量">显示路由器 (.1)</button>
+        <button id="activeOnlyBtn" type="button" data-tip="仅显示本次刷新中实时下载或实时上传任一大于 0 的设备">仅显示活跃</button>
+        <button id="privacyBtn" type="button" data-tip="截图隐私保护：开启后将列表与单设备图中的主机名（仅留前3+后2字符，不足5字符仅留前50%）和 MAC 地址（仅留前3段厂商 OUI）用 * 隐藏">🛡 隐私保护: 关</button>
+      </div>
+      <div class="toolbar-right">
+        <span class="subtitle" id="rowCountInfo" data-tip="当前筛选条件下的设备数；点击下方任意设备行可在上方展开该设备最近 60 秒实时带宽曲线">显示 0 台设备</span>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="hostsTable" class="scope-all">
+        <thead>
+          <tr>
+            <th data-sort="identity" id="thIdentity" data-tip="点击在 设备(降/升) → IP(降/升) → MAC(降/升) 六种排序间循环；点击设备行可展开 60 秒曲线">设备 / IP / MAC</th>
+            <th class="num" data-sort="dlBps" data-tip="点击按实时下载速率排序（基于网桥 br-lan 最近 1 秒增量统计）">1秒实时下载 ↓</th>
+            <th class="num" data-sort="ulBps" data-tip="点击按实时上传速率排序（基于网桥 br-lan 最近 1 秒增量统计）">1秒实时上传 ↑</th>
+            <th class="num" data-sort="dlTotal" data-tip="点击按本次服务启动以来累计下载流量排序">累计下载</th>
+            <th class="num" data-sort="ulTotal" data-tip="点击按本次服务启动以来累计上传流量排序">累计上传</th>
+            <th class="num" data-sort="totalBytes" data-tip="点击按累计下载与累计上传之和排序">累计流量</th>
+            <th class="num col-pps" data-sort="totalPps" data-tip="下载+上传双向每秒数据包数（包/秒）及平均包长；小包高频并发易占用路由器 CPU；点击按收发包率排序">1秒收发包率</th>
+            <th class="num" data-sort="lastSeen" data-tip="点击按最近一次抓包活跃时间排序（5 秒内或存在实时速率将标为“实时”）">最后活跃</th>
+          </tr>
+        </thead>
+        <tbody id="hostsBody">
+          <tr><td colspan="8" class="empty">正在读取数据...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div id="tooltip" class="tooltip" role="tooltip" aria-hidden="true"></div>
+  <div id="helpModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="helpModalTitle">lanstat 使用说明与注意事项</h2>
+        <button id="closeHelpBtn" type="button">关闭</button>
+      </div>
+      <div id="helpModalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    const SCOPE_MODES = ["all", "wan", "lan"];
+    const LANG_ORDER = ["zh", "zh_tw", "en", "ru"];
+    const RANGE_ORDER = ["sec", "min", "hour", "day"];
+    function detectDefaultLang() {
+      const nav = (navigator.language || "").toLowerCase();
+      if (nav.startsWith("zh-tw") || nav.startsWith("zh-hk") || nav.startsWith("zh-mo") || nav.includes("hant")) return "zh_tw";
+      if (nav.startsWith("zh")) return "zh";
+      if (nav.startsWith("ru")) return "ru";
+      return "en";
+    }
+    const savedLang = localStorage.getItem("lanstat_lang");
+    const state = {
+      lang: LANG_ORDER.includes(savedLang) ? savedLang : detectDefaultLang(),
+      intervalMs: 1000,
+      unit: "mbps",
+      range: "sec",
+      paused: false,
+      swapDirection: false,
+      privacy: localStorage.getItem("lanstat_privacy") === "1",
+      groupByMac: localStorage.getItem("lanstat_group_mac") === "1",
+      trafficScope: SCOPE_MODES.includes(localStorage.getItem("lanstat_scope"))
+        ? localStorage.getItem("lanstat_scope")
+        : (localStorage.getItem("lanstat_wan_only") === "1" ? "wan" : "all"),
+      ipv4Only: false,
+      includeRouter: false,
+      activeOnly: false,
+      search: "",
+      sortKey: "totalBps",
+      sortDesc: true,
+      selectedIp: null,
+      peakDlBps: 0,
+      peakUlBps: 0,
+      aliases: JSON.parse(localStorage.getItem("lanstat_aliases") || "{}"),
+      macVendors: JSON.parse(localStorage.getItem("lanstat_mac_vendors") || "{}"),
+      timer: null,
+      inFlight: false,
+      latestData: null,
+    };
+
+    const els = {
+      statusDot: document.getElementById("statusDot"),
+      metaInfo: document.getElementById("metaInfo"),
+      luciLink: document.getElementById("luciLink"),
+      repoLink: document.getElementById("repoLink"),
+      langSwitch: document.getElementById("langSwitch"),
+      langOpts: Array.from(document.querySelectorAll("#langSwitch .seg-opt")),
+      helpBtn: document.getElementById("helpBtn"),
+      helpModal: document.getElementById("helpModal"),
+      helpModalTitle: document.getElementById("helpModalTitle"),
+      helpModalBody: document.getElementById("helpModalBody"),
+      closeHelpBtn: document.getElementById("closeHelpBtn"),
+      intervalSelect: document.getElementById("intervalSelect"),
+      unitSelect: document.getElementById("unitSelect"),
+      swapBtn: document.getElementById("swapBtn"),
+      ifaceSelect: document.getElementById("ifaceSelect"),
+      ifaceApplyBtn: document.getElementById("ifaceApplyBtn"),
+      privacyBtn: document.getElementById("privacyBtn"),
+      pauseBtn: document.getElementById("pauseBtn"),
+      kpiDl: document.getElementById("kpiDl"),
+      kpiUl: document.getElementById("kpiUl"),
+      kpiDlSub: document.getElementById("kpiDlSub"),
+      kpiUlSub: document.getElementById("kpiUlSub"),
+      kpiActive: document.getElementById("kpiActive"),
+      kpiTotalHosts: document.getElementById("kpiTotalHosts"),
+      kpiTotalTraffic: document.getElementById("kpiTotalTraffic"),
+      kpiUptime: document.getElementById("kpiUptime"),
+      rangeTabs: document.getElementById("rangeTabs"),
+      rangeOpts: Array.from(document.querySelectorAll("#rangeTabs .seg-opt")),
+      trendChart: document.getElementById("trendChart"),
+      globalHoverInfo: document.getElementById("globalHoverInfo"),
+      globalRangeStats: document.getElementById("globalRangeStats"),
+      deviceChartCard: document.getElementById("deviceChartCard"),
+      deviceChartTitle: document.getElementById("deviceChartTitle"),
+      deviceChart: document.getElementById("deviceChart"),
+      deviceHoverInfo: document.getElementById("deviceHoverInfo"),
+      closeDeviceChart: document.getElementById("closeDeviceChart"),
+      searchInput: document.getElementById("searchInput"),
+      groupMacBtn: document.getElementById("groupMacBtn"),
+      scopeBtn: document.getElementById("scopeBtn"),
+      ipv4OnlyBtn: document.getElementById("ipv4OnlyBtn"),
+      includeRouterBtn: document.getElementById("includeRouterBtn"),
+      activeOnlyBtn: document.getElementById("activeOnlyBtn"),
+      rowCountInfo: document.getElementById("rowCountInfo"),
+      hostsTable: document.getElementById("hostsTable"),
+      hostsBody: document.getElementById("hostsBody"),
+      tooltip: document.getElementById("tooltip"),
+    };
+
+    const I18N = {
+      zh: {
+        docTitle: "lanstat 实时带宽监控",
+        mainTitle: "lanstat 实时带宽监控",
+        luciLink: "LuCI 后台",
+        openNewTab: "新窗口打开 ↗",
+        langAria: "语言",
+        helpBtn: "❓ 使用说明",
+        ifaceApply: "应用",
+        ifaceApplying: "切换中...",
+        helpTitle: "lanstat 使用说明与注意事项",
+        helpHtml: `
+          <p class="modal-lead"><strong>lanstat</strong> 是一款专为路由器打造的轻量级实时带宽监控面板——<strong>每秒看清哪台设备在占网速</strong>，同时做到超低资源占用与零存储损耗。</p>
+          <div class="help-grid">
+            <div class="help-sec">
+              <h3>一、核心技术优势</h3>
+              <ul>
+                <li><strong>秒级单终端可视化，告别“盲猜”</strong>：传统路由器后台通常只能看总流量粗略曲线，<code>lanstat</code> <strong>每秒刷新每台设备的实时速率排行</strong>，一眼锁定是谁在跑满宽带。</li>
+                <li><strong>独立原生程序，极省资源</strong>：采用零依赖原生程序直接对接系统底层网络数据，<strong>无需额外运行环境或数据库</strong>，常驻内存仅约 <code>1.7 MB</code>，几乎不占路由器性能。</li>
+                <li><strong>零闪存写入，保护硬件寿命</strong>：全部统计与趋势数据均在内存中完成，<strong>不读写路由器闪存</strong>，7×24 小时长期运行也无硬件损耗。</li>
+                <li><strong>开箱即用的实用体验</strong>：自动识别设备名称与离线 MAC 厂商，内置<strong>一键隐私打码截图</strong>与本地备注功能，日常排查或分享截图都更顺手。</li>
+              </ul>
+            </div>
+            <div class="help-sec">
+              <h3>二、主要功能与操作方式</h3>
+              <ul>
+                <li><strong>多时间窗口趋势</strong>：支持<strong>按多种时间窗口</strong>切换全网带宽曲线，鼠标悬停在图上即可查看对应时刻的精确速率。</li>
+                <li><strong>单设备实时曲线与备注</strong>：点击列表<strong>任意设备行</strong>即可展开该设备最近 60 秒独立曲线；点击名称旁的 <code>✎</code> 可保存本地浏览器备注。</li>
+                <li><strong>8 维独立列与排序</strong>：除实时与累计上下行、累计流量外，还提供<strong>收发包率/均包</strong>列（排查 BT/游戏小包负载），所有列均支持点击表头排序。</li>
+                <li><strong>多地址合并与内外网口径联动</strong>：支持 <code>🧩 合并IPv4/IPv6</code> 聚合同一物理终端，点击 <code>🌐 流量口径</code> 在 <strong>内外网 / 仅看外网 / 仅看内网</strong> 三态间切换，各数值列标题与比例条同步更新。</li>
+              </ul>
+            </div>
+            <div class="help-sec warn full">
+              <h3>三、潜在兼容问题与已知不足</h3>
+              <ul>
+                <li><strong>硬件加速 / 流卸载旁路（HWNAT / SFE / WED）</strong>：纯软件流卸载通常仍经过网桥，影响极小；但若开启了<strong>硬件卸载（HWNAT / SFE，若同时开启无线 WED 也会覆盖 Wi-Fi）</strong>，直连转发的长连接在建立后的前几个包后即转由硬件直通，<strong>单条大流量下载偏差可达 90%–99%</strong>，短连接/网页浏览偏差约 <strong>10%–50%</strong>；经由路由器本机处理的流量（如本机代理/VPN/本地服务）或未启用 WED 的 Wi-Fi 流量仍接近 <strong>100% 准确</strong>。</li>
+                <li><strong>纯内存记录（重启清零）</strong>：为避免闪存磨损，历史曲线与累计流量不落盘保存，服务重启或路由器断电后会重新开始统计。</li>
+                <li><strong>适用接口范围</strong>：当前主要适配局域网桥接与以太网接口（如 <code>br-lan</code>、<code>eth0</code>），暂不支持拨号或虚拟隧道接口，也不支持在网页端直接切换监听接口（如需调整可修改 <code>/etc/config/lanstat</code>）。</li>
+                <li><strong>MAC 厂商识别限制</strong>：内置常见消费级设备厂商库，仅识别品牌厂商而非具体产品型号；开启“私有/随机 MAC”功能的终端会标注为 <code>随机/私有 MAC</code>。</li>
+              </ul>
+            </div>
+          </div>
+        `,
+        opt1s: "每 1 秒",
+        opt2s: "每 2 秒",
+        opt3s: "每 3 秒",
+        opt5s: "每 5 秒",
+        optAuto: "自动 (Kbps/Mbps)",
+        kpiDlLabel: "局域网实时下载",
+        kpiUlLabel: "局域网实时上传",
+        kpiActiveLabel: "活跃客户端 (≤60s)",
+        kpiTotalLabel: "累计转发流量",
+        globalChartTitle: "全网实时带宽趋势",
+        tabSec: "60 秒",
+        tabMin: "60 分钟",
+        tabHour: "24 小时",
+        tabDay: "31 天",
+        legendDl: "下载",
+        legendUl: "上传",
+        unitSec: "秒",
+        unitMin: "分钟",
+        unitHour: "小时",
+        unitDay: "天",
+        waitingSample: "等待采样...",
+        chartNow: (n, unit) => `现在 (${n} 点 · ${unit})`,
+        chartPointNow: "当前",
+        chartPointAgo: (ago, unit) => `${ago}${unit}前`,
+        deviceChartSuffix: "最近 60 秒趋势",
+        peakAvg: (p, a) => `峰值: ${p} · 均: ${a}`,
+        activeUnit: (n) => `${n} 台`,
+        recordedHosts: (n) => `已记录设备: ${n} 台`,
+        trafficSub: (rx, tx, cap, drop) => `收 ${rx} · 发 ${tx} · 抓包 ${cap} (丢包 ${drop}%)`,
+        trafficSubLan: (rx, tx, lan, cap, drop) => `收 ${rx} · 发 ${tx} · 内网 ${lan} · 抓包 ${cap} (丢包 ${drop}%)`,
+        rangeStatsLine: (dlB, ulB, totB, pDl, pUl, aDl, aUl) =>
+          `<span>窗口流量: <strong>↓ ${dlB} / ↑ ${ulB}</strong> (共 ${totB})</span><span>峰值: <strong>↓ ${pDl} / ↑ ${pUl}</strong></span><span>均值: <strong>↓ ${aDl} / ↑ ${aUl}</strong></span>`,
+        metaLine: (iface, subnet, mem, cpu, up, time) =>
+          `接口 ${iface} (${subnet}) · 内存占用 ${mem} · CPU占用 ${cpu} · 运行 ${up} · 系统时间 ${time}`,
+        na: "暂不可用",
+        captureErrWarn: (iface) => `无法打开接口 ${iface}（接口不存在或权限不足），请检查配置`,
+        noTrafficWarn: (iface) => `未检测到接口 ${iface} 的流量，请检查接口名配置或硬件加速设置`,
+        connErr: (m) => `连接错误: ${m}`,
+        aliasTip: "为该 IP 设置浏览器本地备注名称（仅保存在本机，不写入路由器）",
+        tips: {
+          statusDot: "运行状态指示灯：绿色表示正常每秒轮询，黄色表示已暂停刷新，红色表示连接路由器接口失败",
+          titleVer: "本前端页面的修改日期版本号（更新于 2026-11-26）",
+          repoLink: "访问 lanstat GitHub 项目主页（查看源码、更新与问题反馈）",
+          luciLink: "在新标签页打开路由器 80 端口的 LuCI 管理后台",
+          openNewTab: "在新标签页独立全屏打开当前实时带宽监控页面",
+          langBtn: "切换界面语言：简（简体中文）/ 繁（繁體中文）/ EN（English）/ РУ（Русский），默认自动匹配浏览器语言",
+          helpBtn: "查看主要功能、操作方式及 HWNAT/Flow Offloading 等兼容说明",
+          ifaceSelect: "选择路由器要监控的局域网接口（如 br-lan），选择后点击右侧“应用”热切换并保存",
+          ifaceApplyBtn: "确认切换到所选网络接口（热切换，无需重启进程，并自动保存配置）",
+          intervalSelect: "设置前端自动拉取实时带宽统计的刷新周期，间隔越短越实时",
+          unitSelect: "切换速率单位：Mbps（宽带测速常用）、自动（按大小切换 bps/Kbps/Mbps）、MB/s（文件下载常用）",
+          swapBtn: "如发现设备下载与上传方向与实际相反，点击可一键互换显示口径（仅影响页面展示）",
+          privacyBtn: "截图隐私保护：开启后将列表与单设备图中的主机名（仅留前3+后2字符，不足5字符仅留前50%）和 MAC 地址（仅留前3段厂商 OUI）用 * 隐藏",
+          pauseBtn: "暂停或恢复自动轮询刷新，方便定格查看当前设备瞬时速率与排序",
+          kpiDlLabel: "全部非路由器局域网设备当前下行带宽之和；下方显示页面打开以来的峰值及 60 秒窗口均值",
+          kpiUlLabel: "全部非路由器局域网设备当前上行带宽之和；下方显示页面打开以来的峰值及 60 秒窗口均值",
+          kpiActiveLabel: "最近 60 秒内有数据包收发的局域网终端数量，以及内存池中累计已识别的终端总数",
+          kpiTotalLabel: "自本次 lanstat 进程启动以来统计到的局域网总流量（纯内存计数不写闪存），附带内核抓包丢包率",
+          globalChartTitle: "展示路由器接口全网总下载/上传带宽变化（始终包含内外网总流量，不随下方列表的仅外网/仅内网切换而变化）；悬停可查看数值",
+          tabSec: "按每秒 1 个点展示最近 60 秒瞬时带宽波动",
+          tabMin: "按每分钟均值展示最近 60 分钟整体带宽趋势",
+          tabHour: "按每小时均值展示最近 24 小时各时段用网高峰",
+          tabDay: "按每日均值展示最长 31 天的历史带宽趋势（仅存内存，重启清零）",
+          deviceChartTitle: "展示选中设备的最近 60 秒实时带宽曲线（始终包含内外网总流量，不随下方列表口径切换而变化）",
+          closeDeviceChart: "收起当前选中设备的 60 秒独立趋势图（点击图表区域也可关闭）",
+          searchInput: "按 IP、主机名、本地备注、厂商或 MAC 明文实时过滤设备列表",
+          groupMacBtn: "将同一 MAC 下的 IPv4 与 IPv6 地址合并为一台终端展示，完整列出所有 IP，排序时按 IPv4 地址排列",
+          scopeBtn: "仅针对下方设备列表生效（不影响上方全网汇总与趋势图）；点击循环切换：内外网（全部）→ 仅看外网（扣除内网互传）→ 仅看内网（仅局域网设备间互传）",
+          ipv4OnlyBtn: "隐藏 IPv6 地址条目，仅保留 IPv4 设备，减少同一终端的多条重复展示",
+          includeRouterBtn: "默认隐藏路由器自身（.1）地址以免干扰终端排行；开启后可查看路由器本体收发流量",
+          activeOnlyBtn: "仅显示本次刷新中实时下载或实时上传任一大于 0 的设备",
+          rowCountInfo: "当前筛选条件下的设备数；点击下方任意设备行可在上方展开该设备最近 60 秒实时带宽曲线",
+          thIdentity: "点击在 设备(降/升) → IP(降/升) → MAC(降/升) 六种排序间循环（合并IPv4/IPv6时仅按 IPv4 地址排序）；点击设备行可展开 60 秒曲线",
+          thDl: "点击按实时下载速率排序（基于网桥 br-lan 最近 1 秒增量统计）",
+          thUl: "点击按实时上传速率排序（基于网桥 br-lan 最近 1 秒增量统计）",
+          thDlTotal: "点击按本次服务启动以来累计下载流量排序",
+          thUlTotal: "点击按本次服务启动以来累计上传流量排序",
+          thTotal: "点击按累计下载与累计上传之和排序；“占全流”指该设备累计总流量占所有设备累计总流量的百分比",
+          thPps: "下载+上传双向合计每秒数据包数；“均包”指平均每个数据包的大小（字节），均包越小通常说明小包越密集、越耗路由器 CPU；点击按收发包率排序",
+          thLastSeen: "点击按最近一次抓包活跃时间排序（5 秒内或存在实时速率将标为“实时”）",
+        },
+        swapStd: "↕ 口径: 标准",
+        swapRev: "↕ 口径: 反转",
+        privacyOn: "🛡 隐私保护: 开",
+        privacyOff: "🛡 隐私保护: 关",
+        pause: "⏸ 暂停",
+        resume: "▶ 继续",
+        groupMac: "🧩 合并IPv4/IPv6",
+        scopeAll: "🌐 流量: 内外网",
+        scopeWan: "🌐 流量: 仅看外网",
+        scopeLan: "🏠 流量: 仅看内网",
+        ipv4Only: "仅显示 IPv4",
+        includeRouter: "显示路由器 (.1)",
+        activeOnly: "仅显示活跃",
+        searchPlaceholder: "搜索 IP / 主机名 / 备注 / MAC...",
+        scopeHeaders: {
+          all: { dlBps: "1秒实时下载 ↓", ulBps: "1秒实时上传 ↑", dlTotal: "累计下载", ulTotal: "累计上传", totalBytes: "累计流量" },
+          wan: { dlBps: "1秒实时外网下载 ↓", ulBps: "1秒实时外网上传 ↑", dlTotal: "累计外网下载", ulTotal: "累计外网上传", totalBytes: "累计外网流量" },
+          lan: { dlBps: "1秒实时内网下载 ↓", ulBps: "1秒实时内网上传 ↑", dlTotal: "累计内网下载", ulTotal: "累计内网上传", totalBytes: "累计内网流量" },
+        },
+        thPps: "1秒收发包率",
+        thLastSeen: "最后活跃",
+        idDevice: "设备",
+        idIp: "IP",
+        idMac: "MAC",
+        liveBadge: "实时",
+        routerBadge: "路由器",
+        unnamed: "(未命名设备)",
+        routerName: "路由器",
+        randomMac: "随机/私有 MAC",
+        noMatch: "没有匹配的设备",
+        showingCount: (n) => `显示 ${n} 台设备`,
+        allShare: (pct) => `占全流 ${pct}%`,
+        ppsVal: (pps) => `${pps} 包/秒`,
+        avgPktVal: (bytes) => `均包 ${bytes} B`,
+        close: "关闭",
+        aliasPrompt: (ip) => `为 ${ip} 设置备注名称（留空则清除）：`,
+      },
+      zh_tw: {
+        docTitle: "lanstat 即時頻寬監控",
+        mainTitle: "lanstat 即時頻寬監控",
+        luciLink: "LuCI 後台",
+        openNewTab: "新視窗開啟 ↗",
+        langAria: "語言",
+        helpBtn: "❓ 使用說明",
+        ifaceApply: "套用",
+        ifaceApplying: "切換中...",
+        helpTitle: "lanstat 使用說明與注意事項",
+        helpHtml: `
+          <p class="modal-lead"><strong>lanstat</strong> 是一款專為路由器打造的輕量級即時頻寬監控面板——<strong>每秒看清哪台裝置在佔用網速</strong>，同時兼顧極低資源佔用與零儲存損耗。</p>
+          <div class="help-grid">
+            <div class="help-sec">
+              <h3>一、核心技術優勢</h3>
+              <ul>
+                <li><strong>秒級單一裝置視覺化，告別「盲猜」</strong>：傳統路由器後台通常只能看總流量粗略曲線，<code>lanstat</code> <strong>每秒重新整理每台裝置的即時速率排行</strong>，一眼鎖定是誰佔滿頻寬。</li>
+                <li><strong>獨立原生程式，極省資源</strong>：採用零相依原生程式直接對接系統底層網路資料，<strong>無需額外執行環境或資料庫</strong>，常駐記憶體僅約 <code>1.7 MB</code>，幾乎不佔路由器效能。</li>
+                <li><strong>零快閃記憶體寫入，保護硬體壽命</strong>：所有統計與趨勢資料皆在記憶體中完成，<strong>不讀寫路由器快閃記憶體</strong>，7×24 小時長期執行也無硬體損耗。</li>
+                <li><strong>開箱即用的實用體驗</strong>：自動辨識裝置名稱與離線 MAC 廠商，內建<strong>一鍵隱私打碼截圖</strong>與本機備註功能，日常排查或分享截圖都更順手。</li>
+              </ul>
+            </div>
+            <div class="help-sec">
+              <h3>二、主要功能與操作方式</h3>
+              <ul>
+                <li><strong>多時間視窗趨勢</strong>：支援<strong>依多種時間視窗</strong>切換全網頻寬曲線，滑鼠懸停在圖上即可檢視對應時刻的精確速率。</li>
+                <li><strong>單一裝置即時曲線與備註</strong>：點擊清單<strong>任一裝置列</strong>即可展開該裝置最近 60 秒獨立曲線；再點一次該列或右上角 <code>×</code> 可收起；點擊名稱旁的 <code>✎</code> 可儲存瀏覽器本機備註。</li>
+                <li><strong>8 維獨立欄位與排序</strong>：除即時與累計上下行、累計流量外，還提供<strong>封包收發率/平均封包</strong>欄（排查 BT/遊戲小封包負載），所有欄位皆支援點擊表頭排序。</li>
+                <li><strong>多位址合併與內外網口徑連動</strong>：支援 <code>🧩 合併IPv4/IPv6</code> 聚合同一實體終端，點擊 <code>🌐 流量口徑</code> 在 <strong>內外網 / 僅看外網 / 僅看內網</strong> 三態間切換，各數值欄標題與比例條同步更新。</li>
+              </ul>
+            </div>
+            <div class="help-sec warn full">
+              <h3>三、潛在相容性問題與已知限制</h3>
+              <ul>
+                <li><strong>硬體加速 / 流量卸載旁路（HWNAT / SFE / WED）</strong>：純軟體流量卸載通常仍經過網橋，影響極小；但若開啟了<strong>硬體卸載（HWNAT / SFE，若同時開啟無線 WED 也會涵蓋 Wi-Fi）</strong>，直連轉發的長連線在建立後的前幾個封包後即轉由硬體直通，<strong>單條大流量下載偏差可達 90%–99%</strong>，短連線/網頁瀏覽偏差約 <strong>10%–50%</strong>；經由路由器本機處理的流量（如本機代理/VPN/本機服務）或未啟用 WED 的 Wi-Fi 流量仍接近 <strong>100% 準確</strong>。</li>
+                <li><strong>純記憶體記錄（重啟歸零）</strong>：為避免快閃記憶體磨損，歷史曲線與累計流量不寫入磁碟，服務重啟或路由器斷電後會重新開始統計。</li>
+                <li><strong>適用介面範圍</strong>：目前主要適配區域網路橋接與乙太網路介面（如 <code>br-lan</code>、<code>eth0</code>），暫不支援撥號或虛擬通道介面，也不支援在網頁端直接切換監聽介面（如需調整可修改 <code>/etc/config/lanstat</code>）。</li>
+                <li><strong>MAC 廠商辨識限制</strong>：內建常見消費級裝置廠商庫，僅辨識品牌廠商而非具體產品型號；開啟「私有/隨機 MAC」功能的終端會標註為 <code>隨機/私有 MAC</code>。</li>
+              </ul>
+            </div>
+          </div>
+        `,
+        opt1s: "每 1 秒",
+        opt2s: "每 2 秒",
+        opt3s: "每 3 秒",
+        opt5s: "每 5 秒",
+        optAuto: "自動 (Kbps/Mbps)",
+        kpiDlLabel: "區網即時下載",
+        kpiUlLabel: "區網即時上傳",
+        kpiActiveLabel: "活躍用戶端 (≤60s)",
+        kpiTotalLabel: "累計轉發流量",
+        globalChartTitle: "全網即時頻寬趨勢",
+        tabSec: "60 秒",
+        tabMin: "60 分鐘",
+        tabHour: "24 小時",
+        tabDay: "31 天",
+        legendDl: "下載",
+        legendUl: "上傳",
+        unitSec: "秒",
+        unitMin: "分鐘",
+        unitHour: "小時",
+        unitDay: "天",
+        waitingSample: "等待取樣...",
+        chartNow: (n, unit) => `現在 (${n} 點 · ${unit})`,
+        chartPointNow: "目前",
+        chartPointAgo: (ago, unit) => `${ago}${unit}前`,
+        deviceChartSuffix: "最近 60 秒趨勢",
+        peakAvg: (p, a) => `峰值: ${p} · 均: ${a}`,
+        activeUnit: (n) => `${n} 台`,
+        recordedHosts: (n) => `已記錄裝置: ${n} 台`,
+        trafficSub: (rx, tx, cap, drop) => `收 ${rx} · 發 ${tx} · 擷取 ${cap} (掉包 ${drop}%)`,
+        trafficSubLan: (rx, tx, lan, cap, drop) => `收 ${rx} · 發 ${tx} · 內網 ${lan} · 擷取 ${cap} (掉包 ${drop}%)`,
+        rangeStatsLine: (dlB, ulB, totB, pDl, pUl, aDl, aUl) =>
+          `<span>視窗流量: <strong>↓ ${dlB} / ↑ ${ulB}</strong> (共 ${totB})</span><span>峰值: <strong>↓ ${pDl} / ↑ ${pUl}</strong></span><span>均值: <strong>↓ ${aDl} / ↑ ${aUl}</strong></span>`,
+        metaLine: (iface, subnet, mem, cpu, up, time) =>
+          `介面 ${iface} (${subnet}) · 記憶體佔用 ${mem} · CPU佔用 ${cpu} · 運作 ${up} · 系統時間 ${time}`,
+        na: "暫不可用",
+        captureErrWarn: (iface) => `無法開啟介面 ${iface}（介面不存在或權限不足），請檢查設定`,
+        noTrafficWarn: (iface) => `未偵測到介面 ${iface} 的流量，請檢查介面名稱設定或硬體加速設定`,
+        connErr: (m) => `連線錯誤: ${m}`,
+        aliasTip: "為此 IP 設定瀏覽器本機備註名稱（僅儲存在本機，不寫入路由器）",
+        tips: {
+          statusDot: "運作狀態指示燈：綠色表示正常每秒輪詢，黃色表示已暫停更新，紅色表示連線路由器介面失敗",
+          titleVer: "本前端頁面的修改日期版本號（更新於 2026-11-26）",
+          repoLink: "造訪 lanstat GitHub 專案主頁（檢視原始碼、更新與問題回報）",
+          luciLink: "在新分頁開啟路由器 80 連接埠的 LuCI 管理後台",
+          openNewTab: "在新分頁獨立全螢幕開啟目前即時頻寬監控頁面",
+          langBtn: "切換介面語言：简（简体中文）/ 繁（繁體中文）/ EN（English）/ РУ（Русский），預設自動比對瀏覽器語言",
+          helpBtn: "檢視主要功能、操作方式及 HWNAT/Flow Offloading 等相容說明",
+          ifaceSelect: "選擇路由器要監控的區網介面（如 br-lan），選擇後點擊右側「套用」熱切換並儲存",
+          ifaceApplyBtn: "確認切換到所選網路介面（熱切換，無需重啟行程，並自動儲存設定）",
+          intervalSelect: "設定前端自動拉取即時頻寬統計的更新週期，間隔越短越即時",
+          unitSelect: "切換速率單位：Mbps（寬頻測速常用）、自動（依大小切換 bps/Kbps/Mbps）、MB/s（檔案下載常用）",
+          swapBtn: "若發現裝置下載與上傳方向與實際相反，點擊可一鍵互換顯示口徑（僅影響頁面展示）",
+          privacyBtn: "截圖隱私保護：開啟後將清單與單一裝置圖中的主機名稱（僅留前3+後2字元，不足5字元僅留前50%）和 MAC 位址（僅留前3段廠商 OUI）用 * 隱藏",
+          pauseBtn: "暫停或恢復自動輪詢更新，方便定格檢視目前裝置瞬時速率與排序",
+          kpiDlLabel: "全部非路由器區網裝置目前下行頻寬總和；下方顯示頁面開啟以來的峰值及 60 秒視窗均值",
+          kpiUlLabel: "全部非路由器區網裝置目前上行頻寬總和；下方顯示頁面開啟以來的峰值及 60 秒視窗均值",
+          kpiActiveLabel: "最近 60 秒內有封包收發的區網終端數量，以及記憶體池中累計已辨識的終端總數",
+          kpiTotalLabel: "自本次 lanstat 行程啟動以來統計到的區網總流量（純記憶體計數不寫快閃記憶體），附帶核心擷取掉包率",
+          globalChartTitle: "展示路由器介面全網總下載/上傳頻寬變化（始終包含內外網總流量，不隨下方清單的僅外網/僅內網切換而變化）；懸停可檢視數值",
+          tabSec: "依每秒 1 個點展示最近 60 秒瞬時頻寬波動",
+          tabMin: "依每分鐘均值展示最近 60 分鐘整體頻寬趨勢",
+          tabHour: "依每小時均值展示最近 24 小時各時段用網高峰",
+          tabDay: "依每日均值展示最長 31 天的歷史頻寬趨勢（僅存記憶體，重啟歸零）",
+          deviceChartTitle: "展示選中裝置的最近 60 秒即時頻寬曲線（始終包含內外網總流量，不隨下方清單口徑切換而變化）",
+          closeDeviceChart: "收起目前選中裝置的 60 秒獨立趨勢圖（再次點擊裝置列也可關閉）",
+          searchInput: "依 IP、主機名稱、本機備註、廠商或 MAC 明文即時過濾裝置清單",
+          groupMacBtn: "將同一 MAC 下的 IPv4 與 IPv6 位址合併為一台終端展示，完整列出所有 IP，排序時依 IPv4 位址排列",
+          scopeBtn: "僅針對下方裝置清單生效（不影響上方全網彙總與趨勢圖）；點擊循環切換：內外網（全部）→ 僅看外網（扣除內網互傳）→ 僅看內網（僅區網裝置間互傳）",
+          ipv4OnlyBtn: "隱藏 IPv6 位址項目，僅保留 IPv4 裝置，減少同一終端的多筆重複展示",
+          includeRouterBtn: "預設隱藏路由器自身（.1）位址以免干擾終端排行；開啟後可檢視路由器本體收發流量",
+          activeOnlyBtn: "僅顯示本次更新中即時下載或即時上傳任一大於 0 的裝置",
+          rowCountInfo: "目前篩選條件下的裝置數；點擊下方任一裝置列可在上方展開該裝置最近 60 秒即時頻寬曲線",
+          thIdentity: "點擊在 裝置(降/升) → IP(降/升) → MAC(降/升) 六種排序間循環（合併IPv4/IPv6時僅依 IPv4 位址排序）；點擊裝置列可展開 60 秒曲線",
+          thDl: "點擊依即時下載速率排序（基於網橋 br-lan 最近 1 秒增量統計）",
+          thUl: "點擊依即時上傳速率排序（基於網橋 br-lan 最近 1 秒增量統計）",
+          thDlTotal: "點擊依本次服務啟動以來累計下載流量排序",
+          thUlTotal: "點擊依本次服務啟動以來累計上傳流量排序",
+          thTotal: "點擊依累計下載與累計上傳總和排序；「佔全流」指該裝置累計總流量佔所有裝置累計總流量的百分比",
+          thPps: "下載+上傳雙向合計每秒封包數；「均包」指平均每個封包的大小（位元組），均包越小通常代表小封包越密集、越耗路由器 CPU；點擊依收發封包率排序",
+          thLastSeen: "點擊依最近一次擷取活躍時間排序（5 秒內或存在即時速率將標為「即時」）",
+        },
+        swapStd: "↕ 口徑: 標準",
+        swapRev: "↕ 口徑: 反轉",
+        privacyOn: "🛡 隱私保護: 開",
+        privacyOff: "🛡 隱私保護: 關",
+        pause: "⏸ 暫停",
+        resume: "▶ 繼續",
+        groupMac: "🧩 合併IPv4/IPv6",
+        scopeAll: "🌐 流量: 內外網",
+        scopeWan: "🌐 流量: 僅看外網",
+        scopeLan: "🏠 流量: 僅看內網",
+        ipv4Only: "僅顯示 IPv4",
+        includeRouter: "顯示路由器 (.1)",
+        activeOnly: "僅顯示活躍",
+        searchPlaceholder: "搜尋 IP / 主機名稱 / 備註 / MAC...",
+        scopeHeaders: {
+          all: { dlBps: "1秒即時下載 ↓", ulBps: "1秒即時上傳 ↑", dlTotal: "累計下載", ulTotal: "累計上傳", totalBytes: "累計流量" },
+          wan: { dlBps: "1秒即時外網下載 ↓", ulBps: "1秒即時外網上傳 ↑", dlTotal: "累計外網下載", ulTotal: "累計外網上傳", totalBytes: "累計外網流量" },
+          lan: { dlBps: "1秒即時內網下載 ↓", ulBps: "1秒即時內網上傳 ↑", dlTotal: "累計內網下載", ulTotal: "累計內網上傳", totalBytes: "累計內網流量" },
+        },
+        thPps: "1秒收發封包率",
+        thLastSeen: "最後活躍",
+        idDevice: "裝置",
+        idIp: "IP",
+        idMac: "MAC",
+        liveBadge: "即時",
+        routerBadge: "路由器",
+        unnamed: "(未命名裝置)",
+        routerName: "路由器",
+        randomMac: "隨機/私有 MAC",
+        noMatch: "沒有符合的裝置",
+        showingCount: (n) => `顯示 ${n} 台裝置`,
+        allShare: (pct) => `佔全流 ${pct}%`,
+        ppsVal: (pps) => `${pps} 包/秒`,
+        avgPktVal: (bytes) => `均包 ${bytes} B`,
+        close: "關閉",
+        aliasPrompt: (ip) => `為 ${ip} 設定備註名稱（留空則清除）：`,
+      },
+      en: {
+        docTitle: "lanstat Live Bandwidth Monitor",
+        mainTitle: "lanstat Live Bandwidth Monitor",
+        luciLink: "LuCI Admin",
+        openNewTab: "Open in New Tab ↗",
+        langAria: "Language",
+        helpBtn: "❓ Help",
+        ifaceApply: "Apply",
+        ifaceApplying: "Switching...",
+        helpTitle: "lanstat Guide & Known Limitations",
+        helpHtml: `
+          <p class="modal-lead"><strong>lanstat</strong> is a lightweight, real-time LAN bandwidth monitor built for routers — <strong>see which device is using your bandwidth at 1-second resolution</strong> with minimal memory usage and zero flash wear.</p>
+          <div class="help-grid">
+            <div class="help-sec">
+              <h3>1. Technical Advantages</h3>
+              <ul>
+                <li><strong>Instant Per-Device Clarity</strong>: Built-in router pages typically only show coarse total traffic; <code>lanstat</code> ranks <strong>every client's live speed every second</strong> so you can spot heavy users immediately.</li>
+                <li><strong>Standalone &amp; Ultra-Light</strong>: Runs as a self-contained native binary reading directly from the OS network layer — <strong>no extra runtime or database needed</strong>, using only ~<code>1.7 MB</code> of RAM.</li>
+                <li><strong>Zero Flash Wear</strong>: All live metrics and history stay strictly in memory (<strong>zero disk/flash writes</strong>), safe for continuous 24/7 operation.</li>
+                <li><strong>Ready-to-Use Productivity</strong>: Automatic hostname matching, built-in offline MAC brand lookup, <strong>one-click privacy masking for screenshots</strong>, and local device aliases.</li>
+              </ul>
+            </div>
+            <div class="help-sec">
+              <h3>2. Features &amp; Quick Guide</h3>
+              <ul>
+                <li><strong>Multiple Time Windows</strong>: Switch across <strong>multiple time windows</strong> to inspect recent bursts or long-term trends; hover over charts for exact values.</li>
+                <li><strong>Device Chart &amp; Local Aliases</strong>: Click <strong>any device row</strong> to expand its live 60-second chart; click <code>✎</code> next to a name to save a custom browser alias.</li>
+                <li><strong>8-Column Metrics &amp; Sorting</strong>: Alongside live/cumulative bandwidth, <strong>Pkt Rate</strong> exposes packet rate &amp; average packet size; click any column header to sort.</li>
+                <li><strong>Merge &amp; Scope Modes</strong>: Use <code>🧩 Merge IPv4/IPv6</code>, cycle <strong>All / WAN / LAN</strong> scope (headers &amp; bars update dynamically), <code>🛡 Privacy</code>, and <code>🌐 EN / 中文</code>.</li>
+              </ul>
+            </div>
+            <div class="help-sec warn full">
+              <h3>3. Compatibility &amp; Known Limitations</h3>
+              <ul>
+                <li><strong>Hardware Acceleration / Flow Offloading (HWNAT / SFE / WED)</strong>: Software-only flow offloading generally still traverses the bridge with minimal impact. With <strong>Hardware Offloading (HWNAT / SFE, plus Wi-Fi when wireless WED is enabled)</strong>, direct bulk flows skip the CPU after the first few handshake packets—<strong>reported rates on large downloads can be 90%–99% lower</strong> (10%–50% for short web flows), while router-terminated traffic (e.g. proxy/VPN/local services) or non-WED Wi-Fi remains near <strong>100% accurate</strong>.</li>
+                <li><strong>In-Memory Only</strong>: To protect router flash storage, historical charts and totals reset when the service restarts or the router reboots.</li>
+                <li><strong>Interface Scope</strong>: Designed for LAN bridge and Ethernet interfaces (e.g. <code>br-lan</code>, <code>eth0</code>); dial-up/VPN tunnel interfaces and web-based interface switching are not supported (edit <code>/etc/config/lanstat</code> if needed).</li>
+                <li><strong>MAC Brand Lookup Scope</strong>: Uses a built-in database of common consumer brands (identifies manufacturer only, not exact model); devices using private/randomized MACs are marked <code>Randomized MAC</code>.</li>
+              </ul>
+            </div>
+          </div>
+        `,
+        opt1s: "Every 1s",
+        opt2s: "Every 2s",
+        opt3s: "Every 3s",
+        opt5s: "Every 5s",
+        optAuto: "Auto (Kbps/Mbps)",
+        kpiDlLabel: "LAN Download",
+        kpiUlLabel: "LAN Upload",
+        kpiActiveLabel: "Active Clients (≤60s)",
+        kpiTotalLabel: "Total Forwarded",
+        globalChartTitle: "Network Bandwidth Trend",
+        tabSec: "60s",
+        tabMin: "60m",
+        tabHour: "24h",
+        tabDay: "31d",
+        legendDl: "Download",
+        legendUl: "Upload",
+        unitSec: "s",
+        unitMin: "m",
+        unitHour: "h",
+        unitDay: "d",
+        waitingSample: "Waiting for samples...",
+        chartNow: (n, unit) => `Now (${n} pts · ${unit})`,
+        chartPointNow: "Now",
+        chartPointAgo: (ago, unit) => `${ago}${unit} ago`,
+        deviceChartSuffix: "Last 60s Trend",
+        peakAvg: (p, a) => `Peak: ${p} · Avg: ${a}`,
+        activeUnit: (n) => `${n}`,
+        recordedHosts: (n) => `Recorded: ${n} devices`,
+        trafficSub: (rx, tx, cap, drop) => `RX ${rx} · TX ${tx} · Pkts ${cap} (Drop ${drop}%)`,
+        trafficSubLan: (rx, tx, lan, cap, drop) => `RX ${rx} · TX ${tx} · LAN ${lan} · Pkts ${cap} (Drop ${drop}%)`,
+        rangeStatsLine: (dlB, ulB, totB, pDl, pUl, aDl, aUl) =>
+          `<span>Window: <strong>↓ ${dlB} / ↑ ${ulB}</strong> (Total ${totB})</span><span>Peak: <strong>↓ ${pDl} / ↑ ${pUl}</strong></span><span>Avg: <strong>↓ ${aDl} / ↑ ${aUl}</strong></span>`,
+        metaLine: (iface, subnet, mem, cpu, up, time) =>
+          `Iface ${iface} (${subnet}) · Mem Usage ${mem} · CPU Usage ${cpu} · Up ${up} · System Time ${time}`,
+        na: "N/A",
+        captureErrWarn: (iface) => `Failed to open interface ${iface} (missing or permission denied); check config`,
+        noTrafficWarn: (iface) => `No traffic captured on ${iface}; check interface config or offloading`,
+        connErr: (m) => `Connection error: ${m}`,
+        aliasTip: "Set a local alias for this IP in browser storage (not written to router)",
+        tips: {
+          statusDot: "Status indicator: green = polling normally, yellow = paused, red = router API connection failed",
+          titleVer: "Frontend build date version (updated 2026-11-26)",
+          repoLink: "Visit the lanstat GitHub repository (source code, releases, and issues)",
+          luciLink: "Open router LuCI web admin (port 80) in a new tab",
+          openNewTab: "Open this bandwidth dashboard standalone in a new browser tab",
+          langBtn: "Switch UI language: 简 (简体中文) / 繁 (繁體中文) / EN (English) / РУ (Русский); defaults to browser language",
+          helpBtn: "View features, usage guide, and HWNAT/Flow Offloading compatibility notes",
+          ifaceSelect: "Select LAN interface to monitor (e.g. br-lan), then click Apply to hot-switch and save",
+          ifaceApplyBtn: "Apply selected network interface (hot-switch without restarting, saved to config)",
+          intervalSelect: "Set polling interval for live bandwidth updates",
+          unitSelect: "Switch rate unit: Mbps, Auto (bps/Kbps/Mbps), or MB/s",
+          swapBtn: "Swap Download/Upload direction if RX/TX appears inverted (display only)",
+          privacyBtn: "Privacy mode for screenshots: masks hostnames and MAC host bytes with *",
+          pauseBtn: "Pause or resume automatic polling to inspect current rates",
+          kpiDlLabel: "Total live download rate across all non-router LAN clients, with session peak and 60s average",
+          kpiUlLabel: "Total live upload rate across all non-router LAN clients, with session peak and 60s average",
+          kpiActiveLabel: "LAN clients active within the last 60s and total tracked devices in memory",
+          kpiTotalLabel: "Total LAN traffic since lanstat started (in-memory only, zero flash writes) and kernel drop rate",
+          globalChartTitle: "Aggregate router interface download/upload trend (always includes both WAN & LAN totals regardless of the table scope filter below); hover for exact values",
+          tabSec: "Last 60 seconds (1-second resolution)",
+          tabMin: "Last 60 minutes (1-minute average)",
+          tabHour: "Last 24 hours (1-hour average)",
+          tabDay: "Last 31 days (daily average, in-memory only)",
+          deviceChartTitle: "Selected device's 60-second live trend (always includes combined WAN+LAN traffic regardless of the table scope filter below)",
+          closeDeviceChart: "Close the selected device's 60s trend chart",
+          searchInput: "Filter devices by IP, hostname, local alias, vendor, or MAC",
+          groupMacBtn: "Merge IPv4 and IPv6 addresses sharing the same MAC into one row (sorted by IPv4)",
+          scopeBtn: "Applies to the device table below only (does not affect top KPIs or trend charts); click to cycle: All (WAN+LAN) → WAN Only → LAN Only",
+          ipv4OnlyBtn: "Hide IPv6 entries and show IPv4 devices only",
+          includeRouterBtn: "Show or hide the router's own (.1) interface traffic",
+          activeOnlyBtn: "Show only devices with non-zero live download or upload rate in this refresh",
+          rowCountInfo: "Number of matching devices; click any row to expand its 60s live chart",
+          thIdentity: "Click to cycle 6 sort modes: Device (desc/asc) → IP (desc/asc) → MAC (desc/asc); sorted by IPv4 when merged",
+          thDl: "Click to sort by live download rate",
+          thUl: "Click to sort by live upload rate",
+          thDlTotal: "Click to sort by total downloaded bytes",
+          thUlTotal: "Click to sort by total uploaded bytes",
+          thTotal: "Click to sort by combined downloaded + uploaded bytes; 'All' is this device's share of all devices' total traffic",
+          thPps: "Combined RX+TX packets per second; 'Avg' is average packet size in bytes (smaller means denser small packets that stress router CPU); click to sort",
+          thLastSeen: "Click to sort by last active time",
+        },
+        swapStd: "↕ Dir: Normal",
+        swapRev: "↕ Dir: Swapped",
+        privacyOn: "🛡 Privacy: ON",
+        privacyOff: "🛡 Privacy: OFF",
+        pause: "⏸ Pause",
+        resume: "▶ Resume",
+        groupMac: "🧩 Merge IPv4/IPv6",
+        scopeAll: "🌐 Scope: All",
+        scopeWan: "🌐 Scope: WAN",
+        scopeLan: "🏠 Scope: LAN",
+        ipv4Only: "IPv4 Only",
+        includeRouter: "Show Router (.1)",
+        activeOnly: "Active Only",
+        searchPlaceholder: "Search IP / Hostname / Alias / MAC...",
+        scopeHeaders: {
+          all: { dlBps: "1s DL ↓", ulBps: "1s UL ↑", dlTotal: "Total DL", ulTotal: "Total UL", totalBytes: "Total Traffic" },
+          wan: { dlBps: "1s WAN DL ↓", ulBps: "1s WAN UL ↑", dlTotal: "WAN Total DL", ulTotal: "WAN Total UL", totalBytes: "WAN Total" },
+          lan: { dlBps: "1s LAN DL ↓", ulBps: "1s LAN UL ↑", dlTotal: "LAN Total DL", ulTotal: "LAN Total UL", totalBytes: "LAN Total" },
+        },
+        thPps: "1s Pkt Rate",
+        thLastSeen: "Last Seen",
+        idDevice: "Device",
+        idIp: "IP",
+        idMac: "MAC",
+        liveBadge: "Live",
+        routerBadge: "Router",
+        unnamed: "(Unnamed)",
+        routerName: "Router",
+        randomMac: "Randomized MAC",
+        noMatch: "No matching devices",
+        showingCount: (n) => `Showing ${n} devices`,
+        allShare: (pct) => `${pct}% of all`,
+        ppsVal: (pps) => `${pps} pkt/s`,
+        avgPktVal: (bytes) => `avg ${bytes} B`,
+        close: "Close",
+        aliasPrompt: (ip) => `Set local alias for ${ip} (leave blank to clear):`,
+      },
+      ru: {
+        docTitle: "lanstat — Монитор трафика",
+        mainTitle: "lanstat — Мониторинг трафика",
+        luciLink: "Панель LuCI",
+        openNewTab: "В новой вкладке ↗",
+        langAria: "Язык",
+        helpBtn: "❓ Справка",
+        ifaceApply: "Применить",
+        ifaceApplying: "Переключение...",
+        helpTitle: "Справка и ограничения lanstat",
+        helpHtml: `
+          <p class="modal-lead"><strong>lanstat</strong> — лёгкая панель мониторинга трафика в реальном времени для роутеров: <strong>показывает каждую секунду, какое устройство занимает канал</strong>, с минимальным расходом ОЗУ и без износа флеш-памяти.</p>
+          <div class="help-grid">
+            <div class="help-sec">
+              <h3>1. Технические преимущества</h3>
+              <ul>
+                <li><strong>Посекундная детализация по устройствам</strong>: штатные страницы роутера обычно показывают лишь общий график; <code>lanstat</code> <strong>ежесекундно ранжирует скорость каждого клиента</strong>.</li>
+                <li><strong>Нативный бинарник, минимум ресурсов</strong>: работает напрямую с сетевым стеком ОС без внешних сред и баз данных, потребляя всего около <code>1.7 МБ</code> ОЗУ.</li>
+                <li><strong>Ноль записи во флеш-память</strong>: вся статистика и история хранятся только в ОЗУ (<strong>без записи на диск</strong>), что безопасно для круглосуточной работы 24/7.</li>
+                <li><strong>Удобство из коробки</strong>: автоопределение имён хостов и производителей по MAC (офлайн-база), <strong>режим приватности для скриншотов</strong> и локальные заметки.</li>
+              </ul>
+            </div>
+            <div class="help-sec">
+              <h3>2. Функции и управление</h3>
+              <ul>
+                <li><strong>Несколько временных окон</strong>: переключение масштаба общего графика; наведение курсора показывает точные значения.</li>
+                <li><strong>График устройства и заметки</strong>: нажмите на <strong>любую строку таблицы</strong>, чтобы открыть 60-секундный график устройства (повторный клик или <code>×</code> закрывает его); кнопка <code>✎</code> сохраняет локальное имя в браузере.</li>
+                <li><strong>8 колонок метрик и сортировка</strong>: помимо скорости и объёма трафика, колонка <strong>Пакеты/с</strong> показывает частоту пакетов и средний размер пакета; сортировка работает по клику на заголовок.</li>
+                <li><strong>Объединение адресов и фильтры</strong>: кнопка <code>🧩 Объединить IPv4/IPv6</code> группирует один хост; <code>🌐 Трафик</code> переключает режимы <strong>Всё / WAN / LAN</strong> с пересчётом колонок.</li>
+              </ul>
+            </div>
+            <div class="help-sec warn full">
+              <h3>3. Совместимость и ограничения</h3>
+              <ul>
+                <li><strong>Аппаратное ускорение (HWNAT / SFE / WED)</strong>: программный Flow Offloading обычно проходит через мост с минимальной погрешностью. При <strong>аппаратном ускорении (HWNAT / SFE, а также Wi-Fi при включённом WED)</strong> длинные потоки после первых пакетов уходят в обход CPU — <strong>потери учёта при крупных загрузках могут достигать 90%–99%</strong> (10%–50% для коротких веб-сессий). Трафик самого роутера (VPN/прокси) и Wi-Fi без WED учитывается с точностью около <strong>100%</strong>.</li>
+                <li><strong>Только в оперативной памяти</strong>: для защиты флеш-памяти счётчики и графики сбрасываются при перезапуске службы или роутера.</li>
+                <li><strong>Поддерживаемые интерфейсы</strong>: рассчитан на LAN-мосты и Ethernet (например, <code>br-lan</code>, <code>eth0</code>); PPP/VPN-туннели и смена интерфейса из веб-интерфейса не поддерживаются (настраивается в <code>/etc/config/lanstat</code>).</li>
+                <li><strong>База производителей MAC</strong>: встроенный словарь определяет только бренд (не модель устройства); устройства со случайным MAC помечаются как <code>Случайный MAC</code>.</li>
+              </ul>
+            </div>
+          </div>
+        `,
+        opt1s: "Каждую 1 с",
+        opt2s: "Каждые 2 с",
+        opt3s: "Каждые 3 с",
+        opt5s: "Каждые 5 с",
+        optAuto: "Авто (Kbps/Mbps)",
+        kpiDlLabel: "Загрузка LAN",
+        kpiUlLabel: "Отдача LAN",
+        kpiActiveLabel: "Активные (≤60с)",
+        kpiTotalLabel: "Всего передано",
+        globalChartTitle: "Общий график пропускной способности",
+        tabSec: "60 с",
+        tabMin: "60 мин",
+        tabHour: "24 ч",
+        tabDay: "31 д",
+        legendDl: "Загрузка",
+        legendUl: "Отдача",
+        unitSec: "с",
+        unitMin: "мин",
+        unitHour: "ч",
+        unitDay: "д",
+        waitingSample: "Ожидание данных...",
+        chartNow: (n, unit) => `Сейчас (${n} тчк · ${unit})`,
+        chartPointNow: "Сейчас",
+        chartPointAgo: (ago, unit) => `${ago} ${unit} назад`,
+        deviceChartSuffix: "тренд за 60 с",
+        peakAvg: (p, a) => `Пик: ${p} · Сред: ${a}`,
+        activeUnit: (n) => `${n}`,
+        recordedHosts: (n) => `Всего в памяти: ${n} устр.`,
+        trafficSub: (rx, tx, cap, drop) => `RX ${rx} · TX ${tx} · Пакеты ${cap} (потери ${drop}%)`,
+        trafficSubLan: (rx, tx, lan, cap, drop) => `RX ${rx} · TX ${tx} · LAN ${lan} · Пакеты ${cap} (потери ${drop}%)`,
+        rangeStatsLine: (dlB, ulB, totB, pDl, pUl, aDl, aUl) =>
+          `<span>За окно: <strong>↓ ${dlB} / ↑ ${ulB}</strong> (Всего ${totB})</span><span>Пик: <strong>↓ ${pDl} / ↑ ${pUl}</strong></span><span>Средняя: <strong>↓ ${aDl} / ↑ ${aUl}</strong></span>`,
+        metaLine: (iface, subnet, mem, cpu, up, time) =>
+          `Интерфейс ${iface} (${subnet}) · ОЗУ ${mem} · CPU ${cpu} · Аптайм ${up} · Сист. время ${time}`,
+        na: "Н/Д",
+        captureErrWarn: (iface) => `Не удалось открыть интерфейс ${iface} (отсутствует или нет прав); проверьте настройки`,
+        noTrafficWarn: (iface) => `На интерфейсе ${iface} нет трафика; проверьте имя интерфейса или аппаратное ускорение`,
+        connErr: (m) => `Ошибка соединения: ${m}`,
+        aliasTip: "Задать локальное имя для этого IP в браузере (на роутер не сохраняется)",
+        tips: {
+          statusDot: "Индикатор: зелёный = опрос активен, жёлтый = пауза, красный = ошибка связи с роутером",
+          titleVer: "Версия веб-интерфейса (обновлено 2026-11-26)",
+          repoLink: "Открыть репозиторий lanstat на GitHub (исходный код, релизы и обратная связь)",
+          luciLink: "Открыть веб-интерфейс LuCI (порт 80) в новой вкладке",
+          openNewTab: "Открыть панель мониторинга отдельно в новой вкладке",
+          langBtn: "Язык интерфейса: 简 (简体中文) / 繁 (繁體中文) / EN (English) / РУ (Русский); по умолчанию определяется по браузеру",
+          helpBtn: "Открыть справку, описание функций и совместимости с HWNAT/Flow Offloading",
+          ifaceSelect: "Выберите LAN-интерфейс (например, br-lan) и нажмите Применить",
+          ifaceApplyBtn: "Применить выбранный интерфейс без перезапуска службы и сохранить настройки",
+          intervalSelect: "Интервал опроса статистики в реальном времени",
+          unitSelect: "Единицы измерения: Mbps, Авто (bps/Kbps/Mbps) или MB/s",
+          swapBtn: "Поменять местами Загрузку и Отдачу, если направления перепутаны (только отображение)",
+          privacyBtn: "Режим приватности для скриншотов: скрывает имена хостов и часть MAC звёздочками *",
+          pauseBtn: "Поставить автообновление на паузу или возобновить",
+          kpiDlLabel: "Суммарная текущая скорость загрузки всех клиентских устройств LAN, пик сессии и среднее за 60 с",
+          kpiUlLabel: "Суммарная текущая скорость отдачи всех клиентских устройств LAN, пик сессии и среднее за 60 с",
+          kpiActiveLabel: "Клиенты LAN с активностью за последние 60 с и общее число устройств в памяти",
+          kpiTotalLabel: "Суммарный трафик LAN с момента запуска lanstat (только в ОЗУ) и процент потерь захвата ядра",
+          globalChartTitle: "Общий график загрузки/отдачи интерфейса (всегда включает WAN+LAN независимо от фильтра таблицы ниже); наведите для деталей",
+          tabSec: "Последние 60 секунд (шаг 1 с)",
+          tabMin: "Последние 60 минут (среднее за 1 мин)",
+          tabHour: "Последние 24 часа (среднее за 1 ч)",
+          tabDay: "Последние 31 день (среднее за сутки, только в ОЗУ)",
+          deviceChartTitle: "График выбранного устройства за 60 с (всегда включает WAN+LAN независимо от фильтра таблицы)",
+          closeDeviceChart: "Закрыть график устройства (также можно повторно нажать на строку устройства)",
+          searchInput: "Поиск по IP, имени хоста, заметке, производителю или MAC",
+          groupMacBtn: "Объединить адреса IPv4 и IPv6 одного MAC в одну строку",
+          scopeBtn: "Фильтр таблицы устройств (не влияет на верхние графики): Всё → Только WAN → Только LAN",
+          ipv4OnlyBtn: "Скрыть записи IPv6 и оставить только IPv4",
+          includeRouterBtn: "Показывать сам роутер (.1) в списке устройств",
+          activeOnlyBtn: "Показывать только устройства с ненулевой скоростью в текущем обновлении",
+          rowCountInfo: "Количество устройств по фильтру; нажмите на строку для графика за 60 с",
+          thIdentity: "Переключение 6 режимов сортировки: Устройство (убыв/возр) → IP → MAC",
+          thDl: "Сортировка по текущей скорости загрузки",
+          thUl: "Сортировка по текущей скорости отдачи",
+          thDlTotal: "Сортировка по накопленной загрузке",
+          thUlTotal: "Сортировка по накопленной отдаче",
+          thTotal: "Сортировка по общему трафику; доля «От всего» — процент от суммарного трафика всех устройств",
+          thPps: "Сумма пакетов/с (RX+TX); «Ср. пкт» — средний размер пакета в байтах (мелкие пакеты сильнее нагружают CPU роутера); нажмите для сортировки",
+          thLastSeen: "Сортировка по времени последней активности",
+        },
+        swapStd: "↕ Напр: Обычн.",
+        swapRev: "↕ Напр: Инверт.",
+        privacyOn: "🛡 Приватность: ВКЛ",
+        privacyOff: "🛡 Приватность: ВЫКЛ",
+        pause: "⏸ Пауза",
+        resume: "▶ Продолжить",
+        groupMac: "🧩 Объединить IPv4/IPv6",
+        scopeAll: "🌐 Трафик: Всё",
+        scopeWan: "🌐 Трафик: WAN",
+        scopeLan: "🏠 Трафик: LAN",
+        ipv4Only: "Только IPv4",
+        includeRouter: "Показать роутер (.1)",
+        activeOnly: "Только активные",
+        searchPlaceholder: "Поиск IP / Хост / Заметка / MAC...",
+        scopeHeaders: {
+          all: { dlBps: "1с Загр. ↓", ulBps: "1с Отд. ↑", dlTotal: "Всего загр.", ulTotal: "Всего отд.", totalBytes: "Весь трафик" },
+          wan: { dlBps: "1с WAN ↓", ulBps: "1с WAN ↑", dlTotal: "WAN загр.", ulTotal: "WAN отд.", totalBytes: "WAN всего" },
+          lan: { dlBps: "1с LAN ↓", ulBps: "1с LAN ↑", dlTotal: "LAN загр.", ulTotal: "LAN отд.", totalBytes: "LAN всего" },
+        },
+        thPps: "1с Пакеты/с",
+        thLastSeen: "Активность",
+        idDevice: "Устройство",
+        idIp: "IP",
+        idMac: "MAC",
+        liveBadge: "Онлайн",
+        routerBadge: "Роутер",
+        unnamed: "(Без имени)",
+        routerName: "Роутер",
+        randomMac: "Случайный MAC",
+        noMatch: "Нет совпадений",
+        showingCount: (n) => `Показано устройств: ${n}`,
+        allShare: (pct) => `От всего ${pct}%`,
+        ppsVal: (pps) => `${pps} пак/с`,
+        avgPktVal: (bytes) => `ср. ${bytes} B`,
+        close: "Закрыть",
+        aliasPrompt: (ip) => `Локальная заметка для ${ip} (оставьте пустым для удаления):`,
+      },
+    };
+
+    function t(key) {
+      const dict = I18N[state.lang] || I18N.en;
+      return dict[key] !== undefined ? dict[key] : I18N.en[key];
+    }
+
+    const isEmbedded = (() => {
+      try {
+        return window.self !== window.top;
+      } catch (_) {
+        return true;
+      }
+    })();
+
+    function applyLanguage() {
+      const htmlLangMap = { zh: "zh-CN", zh_tw: "zh-TW", en: "en", ru: "ru" };
+      document.documentElement.lang = htmlLangMap[state.lang] || "en";
+      document.title = t("docTitle");
+      document.getElementById("mainTitle").textContent = t("mainTitle");
+      els.luciLink.textContent = t(isEmbedded ? "openNewTab" : "luciLink");
+      const langIdx = Math.max(0, LANG_ORDER.indexOf(state.lang));
+      els.langSwitch.dataset.idx = String(langIdx);
+      els.langSwitch.setAttribute("aria-label", t("langAria"));
+      els.langOpts.forEach((btn) => {
+        const active = btn.dataset.lang === state.lang;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-checked", active ? "true" : "false");
+        btn.tabIndex = active ? 0 : -1;
+      });
+      els.helpBtn.textContent = t("helpBtn");
+      els.helpModalTitle.textContent = t("helpTitle");
+      els.helpModalBody.innerHTML = t("helpHtml");
+      els.closeHelpBtn.textContent = t("close");
+      if (!els.ifaceApplyBtn.disabled) els.ifaceApplyBtn.textContent = t("ifaceApply");
+      els.swapBtn.textContent = state.swapDirection ? t("swapRev") : t("swapStd");
+      els.pauseBtn.textContent = state.paused ? t("resume") : t("pause");
+      els.groupMacBtn.textContent = t("groupMac");
+      els.groupMacBtn.classList.toggle("active", state.groupByMac);
+      syncScopeBtn();
+      els.ipv4OnlyBtn.textContent = t("ipv4Only");
+      els.includeRouterBtn.textContent = t("includeRouter");
+      els.activeOnlyBtn.textContent = t("activeOnly");
+      els.searchInput.placeholder = t("searchPlaceholder");
+      els.closeDeviceChart.setAttribute("aria-label", t("close"));
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const k = el.getAttribute("data-i18n");
+        if (k) el.textContent = t(k);
+      });
+      const tips = t("tips");
+      if (tips) {
+        const tipMap = {
+          statusDot: els.statusDot,
+          titleVer: document.querySelector(".title-ver"),
+          repoLink: els.repoLink,
+          [isEmbedded ? "openNewTab" : "luciLink"]: els.luciLink,
+          langBtn: els.langSwitch,
+          helpBtn: els.helpBtn,
+          ifaceSelect: els.ifaceSelect,
+          ifaceApplyBtn: els.ifaceApplyBtn,
+          intervalSelect: els.intervalSelect,
+          unitSelect: els.unitSelect,
+          swapBtn: els.swapBtn,
+          privacyBtn: els.privacyBtn,
+          pauseBtn: els.pauseBtn,
+          kpiDlLabel: document.querySelector('[data-i18n="kpiDlLabel"]'),
+          kpiUlLabel: document.querySelector('[data-i18n="kpiUlLabel"]'),
+          kpiActiveLabel: document.querySelector('[data-i18n="kpiActiveLabel"]'),
+          kpiTotalLabel: document.querySelector('[data-i18n="kpiTotalLabel"]'),
+          globalChartTitle: document.querySelector('[data-i18n="globalChartTitle"]'),
+          tabSec: document.querySelector('[data-range="sec"]'),
+          tabMin: document.querySelector('[data-range="min"]'),
+          tabHour: document.querySelector('[data-range="hour"]'),
+          tabDay: document.querySelector('[data-range="day"]'),
+          deviceChartTitle: els.deviceChartTitle,
+          closeDeviceChart: els.closeDeviceChart,
+          searchInput: els.searchInput,
+          groupMacBtn: els.groupMacBtn,
+          scopeBtn: els.scopeBtn,
+          ipv4OnlyBtn: els.ipv4OnlyBtn,
+          includeRouterBtn: els.includeRouterBtn,
+          activeOnlyBtn: els.activeOnlyBtn,
+          rowCountInfo: els.rowCountInfo,
+          thIdentity: document.getElementById("thIdentity"),
+          thDl: document.querySelector('th[data-sort="dlBps"]'),
+          thUl: document.querySelector('th[data-sort="ulBps"]'),
+          thDlTotal: document.querySelector('th[data-sort="dlTotal"]'),
+          thUlTotal: document.querySelector('th[data-sort="ulTotal"]'),
+          thTotal: document.querySelector('th[data-sort="totalBytes"]'),
+          thPps: document.querySelector('th[data-sort="totalPps"]'),
+          thLastSeen: document.querySelector('th[data-sort="lastSeen"]'),
+        };
+        Object.entries(tipMap).forEach(([k, el]) => {
+          if (el && tips[k]) el.setAttribute("data-tip", tips[k]);
+        });
+      }
+      syncPrivacyBtn();
+      updateSortHeaders();
+    }
+
+    if (isEmbedded) {
+      els.luciLink.href = location.href;
+      els.luciLink.rel = "noopener noreferrer";
+    } else if (location.hostname) {
+      els.luciLink.href = `${location.protocol}//${location.hostname}/cgi-bin/luci/admin/status/lanstat`;
+    }
+
+    function escHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function maskHostName(name) {
+      const chars = Array.from(String(name || ""));
+      const len = chars.length;
+      if (len === 0) return "";
+      if (len <= 5) {
+        const keep = Math.floor(len / 2);
+        return chars.slice(0, keep).join("") + "*".repeat(len - keep);
+      }
+      return chars.slice(0, 3).join("") + "*".repeat(len - 5) + chars.slice(-2).join("");
+    }
+
+    function maskMac(mac) {
+      const raw = String(mac || "");
+      if (!raw || raw === "-") return raw || "-";
+      const sep = raw.includes("-") ? "-" : ":";
+      const parts = raw.split(sep);
+      if (parts.length !== 6) return maskHostName(raw);
+      return `${parts[0]}${sep}${parts[1]}${sep}${parts[2]}${sep}**${sep}**${sep}**`;
+    }
+
+    function syncPrivacyBtn() {
+      els.privacyBtn.classList.toggle("active", state.privacy);
+      els.privacyBtn.textContent = state.privacy ? t("privacyOn") : t("privacyOff");
+    }
+
+    function syncScopeBtn() {
+      const keyMap = { all: "scopeAll", wan: "scopeWan", lan: "scopeLan" };
+      els.scopeBtn.textContent = t(keyMap[state.trafficScope] || "scopeAll");
+      els.scopeBtn.classList.toggle("active", state.trafficScope !== "all");
+      if (els.hostsTable) {
+        els.hostsTable.classList.remove("scope-all", "scope-wan", "scope-lan");
+        els.hostsTable.classList.add(`scope-${state.trafficScope}`);
+      }
+      updateSortHeaders();
+    }
+
+    function selectByScope(allVal, lanVal) {
+      if (state.trafficScope === "wan") return Math.max(0, allVal - lanVal);
+      if (state.trafficScope === "lan") return lanVal;
+      return allVal;
+    }
+
+    function ipToSortKey(ip) {
+      if (!ip) return "";
+      if (ip.includes(".")) {
+        return ip.split(".").map((n) => String(Number(n) || 0).padStart(3, "0")).join(".");
+      }
+      return ip.toLowerCase();
+    }
+
+    const IDENTITY_MODES = [
+      { key: "name", desc: true },
+      { key: "name", desc: false },
+      { key: "ip", desc: true },
+      { key: "ip", desc: false },
+      { key: "mac", desc: true },
+      { key: "mac", desc: false },
+    ];
+
+    function updateSortHeaders() {
+      const arrow = state.sortDesc ? "▼" : "▲";
+      const thId = document.getElementById("thIdentity");
+      const isIdActive = state.sortKey === "name" || state.sortKey === "ip" || state.sortKey === "mac";
+      thId.classList.toggle("sort-active", isIdActive);
+      const parts = [
+        { k: "name", label: t("idDevice") },
+        { k: "ip", label: t("idIp") },
+        { k: "mac", label: t("idMac") },
+      ].map((p) => {
+        const active = state.sortKey === p.k;
+        return `<span class="sort-part${active ? " active" : ""}">${p.label}${active ? `<span class="sort-arrow">${arrow}</span>` : ""}</span>`;
+      });
+      thId.innerHTML = parts.join(" / ");
+
+      const sh = t("scopeHeaders");
+      const sc = (sh && sh[state.trafficScope]) || (sh && sh.all) || {};
+      const colMap = {
+        dlBps: sc.dlBps,
+        ulBps: sc.ulBps,
+        dlTotal: sc.dlTotal,
+        ulTotal: sc.ulTotal,
+        totalBytes: sc.totalBytes,
+        totalPps: t("thPps"),
+        lastSeen: t("thLastSeen"),
+      };
+      document.querySelectorAll("th[data-sort]").forEach((th) => {
+        const key = th.dataset.sort;
+        if (key === "identity") return;
+        const active = state.sortKey === key;
+        th.classList.toggle("sort-active", active);
+        th.innerHTML = active
+          ? `${colMap[key]}<span class="sort-arrow">${arrow}</span>`
+          : colMap[key];
+      });
+    }
+
+    function getMacOui(mac) {
+      const hex = String(mac || "").replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+      return hex.length >= 6 ? hex.slice(0, 6) : "";
+    }
+
+    function isLocallyAdministeredMac(mac) {
+      const oui = getMacOui(mac);
+      if (oui.length < 2) return false;
+      return (parseInt(oui.slice(0, 2), 16) & 0x02) !== 0;
+    }
+
+    const OUI_PACKED = /*__OUI_DATA__*/"";
+    const OUI_VENDORS = Object.create(null);
+    if (OUI_PACKED) {
+      for (const entry of OUI_PACKED.split("|")) {
+        const sep = entry.indexOf(":");
+        if (sep <= 0) continue;
+        const vendor = entry.slice(0, sep);
+        const hexes = entry.slice(sep + 1);
+        for (let i = 0; i + 6 <= hexes.length; i += 6) {
+          OUI_VENDORS[hexes.slice(i, i + 6)] = vendor;
+        }
+      }
+    }
+
+    function getVendorLabel(mac) {
+      if (!mac) return "";
+      if (isLocallyAdministeredMac(mac)) return t("randomMac");
+      const oui = getMacOui(mac);
+      if (!oui) return "";
+      return OUI_VENDORS[oui] || "";
+    }
+
+    function formatRate(bps) {
+      const safe = Math.max(0, Number(bps) || 0);
+      if (state.unit === "mbs") {
+        const mbs = safe / 8e6;
+        if (mbs >= 10) return `${mbs.toFixed(1)} MB/s`;
+        if (mbs >= 0.1) return `${mbs.toFixed(2)} MB/s`;
+        return `${(safe / 8e3).toFixed(1)} KB/s`;
+      }
+      if (state.unit === "auto") {
+        if (safe >= 1e6) return `${(safe / 1e6).toFixed(2)} Mbps`;
+        if (safe >= 1e3) return `${(safe / 1e3).toFixed(1)} Kbps`;
+        return `${safe.toFixed(0)} bps`;
+      }
+      const mbps = safe / 1e6;
+      if (mbps >= 100) return `${mbps.toFixed(1)} Mbps`;
+      if (mbps >= 1) return `${mbps.toFixed(2)} Mbps`;
+      return `${mbps.toFixed(3)} Mbps`;
+    }
+
+    function formatBytes(bytes) {
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let val = Math.max(0, Number(bytes) || 0);
+      let idx = 0;
+      while (val >= 1024 && idx < units.length - 1) {
+        val /= 1024;
+        idx++;
+      }
+      return idx === 0 ? `${val.toFixed(0)} B` : `${val.toFixed(2)} ${units[idx]}`;
+    }
+
+    function formatUptime(secs) {
+      const s = Math.max(0, Math.floor(Number(secs) || 0));
+      const d = Math.floor(s / 86400);
+      const h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const rem = s % 60;
+      if (state.lang === "en") {
+        if (d > 0) return `${d}d ${h}h ${m}m`;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${rem}s`;
+        return `${rem}s`;
+      }
+      if (state.lang === "ru") {
+        if (d > 0) return `${d}д ${h}ч ${m}м`;
+        if (h > 0) return `${h}ч ${m}м`;
+        if (m > 0) return `${m}м ${rem}с`;
+        return `${rem}с`;
+      }
+      if (state.lang === "zh_tw") {
+        if (d > 0) return `${d}天 ${h}小時 ${m}分`;
+        if (h > 0) return `${h}小時 ${m}分`;
+        if (m > 0) return `${m}分 ${rem}秒`;
+        return `${rem}秒`;
+      }
+      if (d > 0) return `${d}天 ${h}小时 ${m}分`;
+      if (h > 0) return `${h}小时 ${m}分`;
+      if (m > 0) return `${m}分 ${rem}秒`;
+      return `${rem}秒`;
+    }
+
+    function formatLastSeen(secs) {
+      const s = Math.max(0, Math.floor(Number(secs) || 0));
+      if (state.lang === "en") {
+        if (s <= 5) return "Live";
+        if (s < 60) return `${s}s ago`;
+        if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+        if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+        return `${Math.floor(s / 86400)}d ago`;
+      }
+      if (state.lang === "ru") {
+        if (s <= 5) return "Онлайн";
+        if (s < 60) return `${s}с назад`;
+        if (s < 3600) return `${Math.floor(s / 60)}м назад`;
+        if (s < 86400) return `${Math.floor(s / 3600)}ч назад`;
+        return `${Math.floor(s / 86400)}д назад`;
+      }
+      if (state.lang === "zh_tw") {
+        if (s <= 5) return "即時";
+        if (s < 60) return `${s}秒前`;
+        if (s < 3600) return `${Math.floor(s / 60)}分前`;
+        if (s < 86400) return `${Math.floor(s / 3600)}小時前`;
+        return `${Math.floor(s / 86400)}天前`;
+      }
+      if (s <= 5) return "实时";
+      if (s < 60) return `${s}秒前`;
+      if (s < 3600) return `${Math.floor(s / 60)}分前`;
+      if (s < 86400) return `${Math.floor(s / 3600)}小时前`;
+      return `${Math.floor(s / 86400)}天前`;
+    }
+
+    function mapSample(pair) {
+      const rx = Number(pair[0]) || 0;
+      const tx = Number(pair[1]) || 0;
+      return state.swapDirection ? { dl: tx, ul: rx } : { dl: rx, ul: tx };
+    }
+
+    function renderSvgChart(svgEl, rawPairs, height, hoverEl, rangeUnitLabel) {
+      const width = 900;
+      const padTop = 10;
+      const padBottom = 18;
+      const plotH = height - padTop - padBottom;
+      const series = (rawPairs || []).map(mapSample);
+      svgEl._series = series;
+      svgEl._rangeLabel = rangeUnitLabel;
+      svgEl._hoverEl = hoverEl;
+
+      if (!series.length) {
+        svgEl.innerHTML = `<text x="50%" y="${height / 2}" text-anchor="middle" fill="#64748b" font-size="12">${escHtml(t("waitingSample"))}</text>`;
+        return;
+      }
+
+      const maxBps = Math.max(100000, ...series.map((p) => Math.max(p.dl, p.ul)));
+      const n = series.length;
+      const stepX = n > 1 ? width / (n - 1) : width;
+      const toY = (bps) => padTop + plotH - (bps / maxBps) * plotH;
+
+      const dlPts = series.map((p, i) => `${(n === 1 ? width : i * stepX).toFixed(1)},${toY(p.dl).toFixed(1)}`);
+      const ulPts = series.map((p, i) => `${(n === 1 ? width : i * stepX).toFixed(1)},${toY(p.ul).toFixed(1)}`);
+      if (n === 1) {
+        dlPts.unshift(`0.0,${toY(series[0].dl).toFixed(1)}`);
+        ulPts.unshift(`0.0,${toY(series[0].ul).toFixed(1)}`);
+      }
+
+      const dlArea = `0,${padTop + plotH} ${dlPts.join(" ")} ${width},${padTop + plotH}`;
+      const ulArea = `0,${padTop + plotH} ${ulPts.join(" ")} ${width},${padTop + plotH}`;
+
+      const gridLines = [0.25, 0.5, 0.75, 1].map((ratio) => {
+        const y = padTop + plotH * (1 - ratio);
+        return `<line x1="0" y1="${y.toFixed(1)}" x2="${width}" y2="${y.toFixed(1)}" stroke="#1e293b" stroke-dasharray="4 4" />
+                <text x="6" y="${(y - 3).toFixed(1)}" fill="#64748b" font-size="11">${escHtml(formatRate(maxBps * ratio))}</text>`;
+      }).join("");
+
+      svgEl.innerHTML = `
+        <defs>
+          <linearGradient id="${svgEl.id}-dlG" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.30"/>
+            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.02"/>
+          </linearGradient>
+          <linearGradient id="${svgEl.id}-ulG" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#34d399" stop-opacity="0.24"/>
+            <stop offset="100%" stop-color="#34d399" stop-opacity="0.01"/>
+          </linearGradient>
+        </defs>
+        ${gridLines}
+        <line x1="0" y1="${padTop + plotH}" x2="${width}" y2="${padTop + plotH}" stroke="#263349" />
+        <polygon points="${dlArea}" fill="url(#${svgEl.id}-dlG)" />
+        <polygon points="${ulArea}" fill="url(#${svgEl.id}-ulG)" />
+        <polyline fill="none" stroke="#38bdf8" stroke-width="2" points="${dlPts.join(" ")}" />
+        <polyline fill="none" stroke="#34d399" stroke-width="2" points="${ulPts.join(" ")}" />
+        <line class="hover-line" x1="-10" y1="${padTop}" x2="-10" y2="${padTop + plotH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3" style="display:none;" />
+        <text x="${width - 6}" y="${height - 3}" text-anchor="end" fill="#64748b" font-size="11">${escHtml(t("chartNow")(n, rangeUnitLabel))}</text>
+      `;
+    }
+
+    function bindChartHover(svgEl) {
+      function updateHoverAtClientX(clientX) {
+        const series = svgEl._series;
+        const hoverEl = svgEl._hoverEl;
+        if (!series || !series.length || !hoverEl) return;
+        const rect = svgEl.getBoundingClientRect();
+        if (!rect.width) return;
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const idx = series.length === 1 ? 0 : Math.round(ratio * (series.length - 1));
+        const pt = series[idx];
+        const xPos = series.length === 1 ? 900 : (idx / (series.length - 1)) * 900;
+        const line = svgEl.querySelector(".hover-line");
+        if (line) {
+          line.setAttribute("x1", xPos.toFixed(1));
+          line.setAttribute("x2", xPos.toFixed(1));
+          line.style.display = "block";
+        }
+        const ago = series.length - 1 - idx;
+        const timeText = ago === 0 ? t("chartPointNow") : t("chartPointAgo")(ago, svgEl._rangeLabel);
+        hoverEl.textContent = `${timeText}: ↓ ${formatRate(pt.dl)} / ↑ ${formatRate(pt.ul)}`;
+      }
+      function clearHover() {
+        const line = svgEl.querySelector(".hover-line");
+        if (line) line.style.display = "none";
+        if (svgEl._hoverEl) svgEl._hoverEl.textContent = "";
+      }
+      svgEl.addEventListener("mousemove", (e) => updateHoverAtClientX(e.clientX));
+      svgEl.addEventListener("mouseleave", clearHover);
+      svgEl.addEventListener("touchstart", (e) => {
+        if (e.touches && e.touches[0]) updateHoverAtClientX(e.touches[0].clientX);
+      }, { passive: true });
+      svgEl.addEventListener("touchmove", (e) => {
+        if (e.touches && e.touches[0]) updateHoverAtClientX(e.touches[0].clientX);
+      }, { passive: true });
+      svgEl.addEventListener("touchend", clearHover);
+      svgEl.addEventListener("touchcancel", clearHover);
+    }
+    bindChartHover(els.trendChart);
+    bindChartHover(els.deviceChart);
+
+    function buildDisplayRows(data) {
+      return (data.hosts || []).map((h) => {
+        const rawDlBps = state.swapDirection ? h.tx_bps : h.rx_bps;
+        const rawUlBps = state.swapDirection ? h.rx_bps : h.tx_bps;
+        const rawDlTotal = state.swapDirection ? h.tx_bytes : h.rx_bytes;
+        const rawUlTotal = state.swapDirection ? h.rx_bytes : h.tx_bytes;
+        const lanDlBps = state.swapDirection ? (h.lan_tx_bps || 0) : (h.lan_rx_bps || 0);
+        const lanUlBps = state.swapDirection ? (h.lan_rx_bps || 0) : (h.lan_tx_bps || 0);
+        const lanDlTotal = state.swapDirection ? (h.lan_tx_bytes || 0) : (h.lan_rx_bytes || 0);
+        const lanUlTotal = state.swapDirection ? (h.lan_rx_bytes || 0) : (h.lan_tx_bytes || 0);
+        const dlBps = selectByScope(rawDlBps, lanDlBps);
+        const ulBps = selectByScope(rawUlBps, lanUlBps);
+        const dlTotal = selectByScope(rawDlTotal, lanDlTotal);
+        const ulTotal = selectByScope(rawUlTotal, lanUlTotal);
+        const rxPkts = h.rx_pkts || 0;
+        const txPkts = h.tx_pkts || 0;
+        const rxPps = h.rx_pps || 0;
+        const txPps = h.tx_pps || 0;
+        const totalPps = rxPps + txPps;
+        const totalPkts = rxPkts + txPkts;
+        const avgPktBytes = totalPkts > 0 ? Math.round((rawDlTotal + rawUlTotal) / totalPkts) : 0;
+        const alias = state.aliases[h.ip] || "";
+        const hasRealName = Boolean(alias || h.name);
+        const rawName = alias || h.name || (h.router ? t("routerName") : t("unnamed"));
+        const displayName = state.privacy && hasRealName ? maskHostName(rawName) : rawName;
+        const hostname = state.privacy && h.name ? maskHostName(h.name) : (h.name || "");
+        const mac = state.privacy && h.mac ? maskMac(h.mac) : (h.mac || "");
+        const vendor = getVendorLabel(h.mac);
+        return {
+          ip: h.ip,
+          ips: [h.ip],
+          mac,
+          rawMac: h.mac || "",
+          vendor,
+          hostname,
+          alias,
+          hasRealName,
+          displayName,
+          searchHay: `${h.ip} ${rawName} ${h.name || ""} ${h.mac || ""} ${vendor}`.toLowerCase(),
+          family: h.family,
+          hasV6: h.family === 6,
+          lan: !!h.lan,
+          router: !!h.router,
+          dlBps,
+          ulBps,
+          totalBps: dlBps + ulBps,
+          dlTotal,
+          ulTotal,
+          totalBytes: dlTotal + ulTotal,
+          rawBpsSum: rawDlBps + rawUlBps,
+          rawBytesSum: rawDlTotal + rawUlTotal,
+          rxPkts,
+          txPkts,
+          totalPps,
+          avgPktBytes,
+          lastSeen: h.last_seen,
+        };
+      });
+    }
+
+    function groupRowsByMac(list) {
+      const map = new Map();
+      for (const r of list) {
+        const key = r.rawMac ? `mac:${r.rawMac.toLowerCase()}` : `ip:${r.ip}`;
+        const existing = map.get(key);
+        if (!existing) {
+          map.set(key, { ...r, ips: [...r.ips] });
+          continue;
+        }
+        if (!existing.ips.includes(r.ip)) {
+          if (r.family === 4) existing.ips.unshift(r.ip);
+          else existing.ips.push(r.ip);
+        }
+        const preferNew = (r.family === 4 && existing.family !== 4) ||
+          (r.family === existing.family && r.totalBytes > existing.totalBytes);
+        if (preferNew) {
+          existing.ip = r.ip;
+          existing.family = r.family;
+        }
+        if ((!existing.hasRealName && r.hasRealName) || (!existing.alias && r.alias)) {
+          existing.displayName = r.displayName;
+          existing.alias = r.alias;
+          existing.hostname = r.hostname;
+          existing.hasRealName = r.hasRealName;
+        }
+        existing.hasV6 = existing.hasV6 || r.hasV6;
+        existing.dlBps += r.dlBps;
+        existing.ulBps += r.ulBps;
+        existing.totalBps = existing.dlBps + existing.ulBps;
+        existing.dlTotal += r.dlTotal;
+        existing.ulTotal += r.ulTotal;
+        existing.totalBytes = existing.dlTotal + existing.ulTotal;
+        existing.rawBpsSum += r.rawBpsSum;
+        existing.rawBytesSum += r.rawBytesSum;
+        existing.rxPkts += r.rxPkts;
+        existing.txPkts += r.txPkts;
+        existing.totalPps += r.totalPps;
+        const totPkts = existing.rxPkts + existing.txPkts;
+        existing.avgPktBytes = totPkts > 0 ? Math.round(existing.rawBytesSum / totPkts) : 0;
+        existing.lastSeen = Math.min(existing.lastSeen, r.lastSeen);
+        existing.searchHay = `${existing.searchHay} ${r.searchHay}`;
+      }
+      return Array.from(map.values());
+    }
+
+    function renderTable() {
+      const data = state.latestData;
+      if (!data) return;
+      const q = state.search.trim().toLowerCase();
+      const baseRows = buildDisplayRows(data).filter((r) => {
+        if (state.ipv4Only && r.family !== 4) return false;
+        if (!state.includeRouter && r.router) return false;
+        return true;
+      });
+      const scopedRows = state.groupByMac ? groupRowsByMac(baseRows) : baseRows;
+      let rows = scopedRows.filter((r) => {
+        if (state.activeOnly && r.dlBps <= 0 && r.ulBps <= 0) return false;
+        if (q) {
+          if (!r.searchHay.includes(q)) return false;
+        }
+        return true;
+      });
+
+      rows.sort((a, b) => {
+        if (state.sortKey === "name") {
+          return state.sortDesc
+            ? b.displayName.localeCompare(a.displayName)
+            : a.displayName.localeCompare(b.displayName);
+        }
+        if (state.sortKey === "ip") {
+          const ka = ipToSortKey(a.ip);
+          const kb = ipToSortKey(b.ip);
+          return state.sortDesc ? kb.localeCompare(ka) : ka.localeCompare(kb);
+        }
+        if (state.sortKey === "mac") {
+          const ma = (a.mac || "").toLowerCase();
+          const mb = (b.mac || "").toLowerCase();
+          if (!ma && !mb) return 0;
+          if (!ma) return 1;
+          if (!mb) return -1;
+          return state.sortDesc ? mb.localeCompare(ma) : ma.localeCompare(mb);
+        }
+        const diff = (a[state.sortKey] || 0) - (b[state.sortKey] || 0);
+        if (diff !== 0) return state.sortDesc ? -diff : diff;
+        return b.totalBytes - a.totalBytes;
+      });
+
+      els.rowCountInfo.textContent = t("showingCount")(rows.length);
+      if (!rows.length) {
+        const cols = state.trafficScope === "all" ? 8 : 7;
+        els.hostsBody.innerHTML = `<tr><td colspan="${cols}" class="empty">${t("noMatch")}</td></tr>`;
+        return;
+      }
+
+      const rawGlobalDl = Number(state.swapDirection ? data.total_tx_bps : data.total_rx_bps) || 0;
+      const rawGlobalUl = Number(state.swapDirection ? data.total_rx_bps : data.total_tx_bps) || 0;
+      const lanGlobalDl = Number(state.swapDirection ? data.total_lan_tx_bps : data.total_lan_rx_bps) || 0;
+      const lanGlobalUl = Number(state.swapDirection ? data.total_lan_rx_bps : data.total_lan_tx_bps) || 0;
+      const totalDlBps = Math.max(1, selectByScope(rawGlobalDl, lanGlobalDl));
+      const totalUlBps = Math.max(1, selectByScope(rawGlobalUl, lanGlobalUl));
+      const sumRows = scopedRows;
+      const sumDlTotal = Math.max(1, sumRows.reduce((sum, r) => sum + r.dlTotal, 0));
+      const sumUlTotal = Math.max(1, sumRows.reduce((sum, r) => sum + r.ulTotal, 0));
+      const sumTotalBytes = Math.max(1, sumRows.reduce((sum, r) => sum + r.totalBytes, 0));
+      const sumTotalPps = Math.max(1, sumRows.reduce((sum, r) => sum + r.totalPps, 0));
+      const toPct = (v, total) => (v > 0 ? Math.max(2.5, Math.min(100, (v / total) * 100)).toFixed(1) : "0.0");
+      const shareSub = (val, total) => (val > 0 && total > 0)
+        ? `<div class="dev-sub">${escHtml(t("allShare")(Math.round((val / total) * 100)))}</div>`
+        : "";
+
+      els.hostsBody.innerHTML = rows.map((r) => {
+        const dlPct = toPct(r.dlBps, totalDlBps);
+        const ulPct = toPct(r.ulBps, totalUlBps);
+        const dlTotPct = toPct(r.dlTotal, sumDlTotal);
+        const ulTotPct = toPct(r.ulTotal, sumUlTotal);
+        const totPct = toPct(r.totalBytes, sumTotalBytes);
+        const ppsPct = toPct(r.totalPps, sumTotalPps);
+        const selClass = (state.selectedIp && r.ips.includes(state.selectedIp)) ? "selected" : "";
+        const isLive = r.lastSeen <= 5 || r.totalBps > 0;
+        const badge = isLive
+          ? `<span class="badge live">${t("liveBadge")}</span>`
+          : `<span class="badge">${escHtml(formatLastSeen(r.lastSeen))}</span>`;
+        const ppsMain = (r.totalPps > 0 || r.avgPktBytes > 0) ? escHtml(t("ppsVal")(r.totalPps)) : "-";
+        const ppsSub = r.avgPktBytes > 0
+          ? `<div class="dev-sub">${escHtml(t("avgPktVal")(r.avgPktBytes))}</div>`
+          : "";
+        const ipLabel = r.ips.join(" / ");
+        const tags = `${r.router ? `<span class="badge">${t("routerBadge")}</span>` : ""}${r.hasV6 ? '<span class="badge v6">IPv6</span>' : ""}`;
+        const sub = [ipLabel, r.mac || "-", r.vendor, r.alias && r.hostname ? r.hostname : ""].filter(Boolean).join(" · ");
+        return `<tr class="${selClass}" data-ip="${escHtml(r.ip)}">
+          <td>
+            <div class="dev-name">${escHtml(r.displayName)}${tags}<button class="alias-btn" type="button" data-alias-ip="${escHtml(r.ip)}" data-tip="${escHtml(t("aliasTip"))}">✎</button></div>
+            <div class="dev-sub">${escHtml(sub)}</div>
+          </td>
+          <td class="num dl-color">${escHtml(formatRate(r.dlBps))}<span class="bar-bg"><span class="bar-fill-dl" style="width:${dlPct}%"></span></span>${shareSub(r.dlBps, r.rawBpsSum)}</td>
+          <td class="num ul-color">${escHtml(formatRate(r.ulBps))}<span class="bar-bg"><span class="bar-fill-ul" style="width:${ulPct}%"></span></span>${shareSub(r.ulBps, r.rawBpsSum)}</td>
+          <td class="num">${escHtml(formatBytes(r.dlTotal))}<span class="bar-bg"><span class="bar-fill-dl" style="width:${dlTotPct}%"></span></span>${shareSub(r.dlTotal, r.rawBytesSum)}</td>
+          <td class="num">${escHtml(formatBytes(r.ulTotal))}<span class="bar-bg"><span class="bar-fill-ul" style="width:${ulTotPct}%"></span></span>${shareSub(r.ulTotal, r.rawBytesSum)}</td>
+          <td class="num">${escHtml(formatBytes(r.totalBytes))}<span class="bar-bg"><span class="bar-fill-total" style="width:${totPct}%"></span></span></td>
+          <td class="num col-pps">${ppsMain}<span class="bar-bg"><span class="bar-fill-pps" style="width:${ppsPct}%"></span></span>${ppsSub}</td>
+          <td class="num">${badge}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    function renderGlobalChart(data) {
+      const rings = data.rings || {};
+      const mapRange = {
+        sec: { pts: rings.sec || [], label: t("unitSec") },
+        min: { pts: rings.min || [], label: t("unitMin") },
+        hour: { pts: rings.hour || [], label: t("unitHour") },
+        day: { pts: rings.day || [], label: t("unitDay") },
+      };
+      const info = mapRange[state.range] || mapRange.sec;
+      const rt = (data.ring_totals && data.ring_totals[state.range]) || [0, 0];
+      const winDlBytes = state.swapDirection ? rt[1] : rt[0];
+      const winUlBytes = state.swapDirection ? rt[0] : rt[1];
+      let pDl = 0, pUl = 0, sDl = 0, sUl = 0;
+      info.pts.forEach((p) => {
+        const m = mapSample(p);
+        if (m.dl > pDl) pDl = m.dl;
+        if (m.ul > pUl) pUl = m.ul;
+        sDl += m.dl;
+        sUl += m.ul;
+      });
+      const cnt = info.pts.length || 1;
+      els.globalRangeStats.innerHTML = t("rangeStatsLine")(
+        formatBytes(winDlBytes),
+        formatBytes(winUlBytes),
+        formatBytes(winDlBytes + winUlBytes),
+        formatRate(pDl),
+        formatRate(pUl),
+        formatRate(sDl / cnt),
+        formatRate(sUl / cnt)
+      );
+      renderSvgChart(els.trendChart, info.pts, 160, els.globalHoverInfo, info.label);
+    }
+
+    function renderDeviceChart(data) {
+      if (!state.selectedIp || !data.detail || data.detail.ip !== state.selectedIp) {
+        if (!state.selectedIp) els.deviceChartCard.style.display = "none";
+        return;
+      }
+      const host = (data.hosts || []).find((h) => h.ip === state.selectedIp);
+      const rawTitleName = state.aliases[state.selectedIp] || (host && host.name) || "";
+      const titleName = rawTitleName
+        ? (state.privacy ? maskHostName(rawTitleName) : rawTitleName)
+        : state.selectedIp;
+      els.deviceChartCard.style.display = "block";
+      els.deviceChartTitle.textContent = `${titleName} (${state.selectedIp}) · ${t("deviceChartSuffix")}`;
+      renderSvgChart(els.deviceChart, data.detail.sec || [], 140, els.deviceHoverInfo, t("unitSec"));
+    }
+
+    function renderAll(data) {
+      state.latestData = data;
+      const rawDl = state.swapDirection ? data.total_tx_bps : data.total_rx_bps;
+      const rawUl = state.swapDirection ? data.total_rx_bps : data.total_tx_bps;
+      const totDlBytes = state.swapDirection ? data.total_tx_bytes : data.total_rx_bytes;
+      const totUlBytes = state.swapDirection ? data.total_rx_bytes : data.total_tx_bytes;
+
+      if (rawDl > state.peakDlBps) state.peakDlBps = rawDl;
+      if (rawUl > state.peakUlBps) state.peakUlBps = rawUl;
+
+      const secPts = (data.rings && data.rings.sec) || [];
+      let avgDl = rawDl;
+      let avgUl = rawUl;
+      if (secPts.length) {
+        let sumDl = 0, sumUl = 0;
+        secPts.forEach((p) => {
+          const m = mapSample(p);
+          sumDl += m.dl;
+          sumUl += m.ul;
+        });
+        avgDl = sumDl / secPts.length;
+        avgUl = sumUl / secPts.length;
+      }
+
+      els.kpiDl.textContent = formatRate(rawDl);
+      els.kpiUl.textContent = formatRate(rawUl);
+      els.kpiDlSub.textContent = t("peakAvg")(formatRate(state.peakDlBps), formatRate(avgDl));
+      els.kpiUlSub.textContent = t("peakAvg")(formatRate(state.peakUlBps), formatRate(avgUl));
+
+      const lanHosts = (data.hosts || []).filter((h) => !h.router);
+      const activeCnt = lanHosts.filter((h) => h.last_seen <= 60).length;
+      els.kpiActive.textContent = t("activeUnit")(activeCnt);
+      els.kpiTotalHosts.textContent = t("recordedHosts")(lanHosts.length);
+
+      els.kpiTotalTraffic.textContent = formatBytes(totDlBytes + totUlBytes);
+      const cap = data.kern_captured || 0;
+      const drop = data.kern_dropped || 0;
+      const dropPct = cap + drop > 0 ? ((drop / (cap + drop)) * 100).toFixed(2) : "0.00";
+      const rssBytes = data.rss_bytes || 0;
+      const memPct = (rssBytes > 0 && (data.mem_total_bytes || 0) > 0)
+        ? ` (${((rssBytes / data.mem_total_bytes) * 100).toFixed(2)}%)`
+        : "";
+      const memLabel = rssBytes > 0 ? `${(rssBytes / 1048576).toFixed(2)} MB${memPct}` : t("na");
+      const cpuPct = (typeof data.cpu_pct_x100 === "number" && data.cpu_pct_x100 >= 0)
+        ? `${(data.cpu_pct_x100 / 100).toFixed(2)}%`
+        : t("na");
+      const lanTotalBytes = (data.total_lan_rx_bytes || 0) + (data.total_lan_tx_bytes || 0);
+      els.kpiUptime.textContent = lanTotalBytes > 0
+        ? t("trafficSubLan")(formatBytes(totDlBytes), formatBytes(totUlBytes), formatBytes(lanTotalBytes), cap.toLocaleString(), dropPct)
+        : t("trafficSub")(formatBytes(totDlBytes), formatBytes(totUlBytes), cap.toLocaleString(), dropPct);
+
+      els.statusDot.className = state.paused ? "status-dot paused" : "status-dot";
+      const metaText = t("metaLine")(
+        data.iface, data.subnet || "-", memLabel, cpuPct, formatUptime(data.uptime_secs), data.server_time || new Date().toLocaleTimeString()
+      );
+      const noTraffic = (data.uptime_secs || 0) >= 3 && (data.raw_packets || 0) === 0 && totDlBytes === 0 && totUlBytes === 0;
+      if (data.capture_ok === false) {
+        els.metaInfo.textContent = `${metaText} · ⚠ ${t("captureErrWarn")(data.iface)}`;
+      } else {
+        els.metaInfo.textContent = noTraffic ? `${metaText} · ⚠ ${t("noTrafficWarn")(data.iface)}` : metaText;
+      }
+
+      renderGlobalChart(data);
+      renderDeviceChart(data);
+      renderTable();
+
+      if (data.capture_ok === false && Array.isArray(data.ifaces) && data.ifaces.length > 0) {
+        const key = data.ifaces.join(",");
+        if (els.ifaceSelect.dataset.key !== key) {
+          const prevVal = els.ifaceSelect.value || data.iface;
+          els.ifaceSelect.dataset.key = key;
+          els.ifaceSelect.innerHTML = data.ifaces.map((name) => `<option value="${escHtml(name)}">${escHtml(name)}</option>`).join("");
+          els.ifaceSelect.value = data.ifaces.includes(prevVal) ? prevVal : (data.ifaces.includes(data.iface) ? data.iface : data.ifaces[0]);
+        }
+        els.ifaceSelect.style.display = "";
+        els.ifaceApplyBtn.style.display = "";
+        els.ifaceSelect.style.borderColor = "var(--warn, #f59e0b)";
+        els.ifaceApplyBtn.classList.toggle("active", els.ifaceSelect.value !== data.iface);
+      } else {
+        els.ifaceSelect.style.display = "none";
+        els.ifaceApplyBtn.style.display = "none";
+      }
+    }
+
+    async function poll() {
+      if (state.paused || state.inFlight) return;
+      state.inFlight = true;
+      try {
+        const url = state.selectedIp
+          ? `/api/stats?detail=${encodeURIComponent(state.selectedIp)}`
+          : "/api/stats";
+        const resp = await fetch(url, { cache: "no-store" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        renderAll(data);
+      } catch (err) {
+        els.statusDot.className = "status-dot error";
+        els.metaInfo.textContent = t("connErr")(err.message);
+      } finally {
+        state.inFlight = false;
+      }
+    }
+
+    function resetTimer() {
+      if (state.timer) clearInterval(state.timer);
+      state.timer = setInterval(poll, state.intervalMs);
+    }
+
+    els.intervalSelect.addEventListener("change", (e) => {
+      state.intervalMs = Number(e.target.value);
+      resetTimer();
+    });
+    els.unitSelect.addEventListener("change", (e) => {
+      state.unit = e.target.value;
+      if (state.latestData) renderAll(state.latestData);
+    });
+    els.swapBtn.addEventListener("click", () => {
+      state.swapDirection = !state.swapDirection;
+      els.swapBtn.textContent = state.swapDirection ? t("swapRev") : t("swapStd");
+      state.peakDlBps = 0;
+      state.peakUlBps = 0;
+      if (state.latestData) renderAll(state.latestData);
+    });
+
+    els.ifaceSelect.addEventListener("change", () => {
+      if (state.latestData) {
+        els.ifaceApplyBtn.classList.toggle("active", els.ifaceSelect.value !== state.latestData.iface);
+      }
+    });
+
+    els.ifaceApplyBtn.addEventListener("click", async () => {
+      const nextIface = els.ifaceSelect.value;
+      if (!nextIface || (state.latestData && nextIface === state.latestData.iface)) return;
+      els.ifaceApplyBtn.disabled = true;
+      els.ifaceApplyBtn.textContent = t("ifaceApplying");
+      try {
+        const res = await fetch(`/api/iface?name=${encodeURIComponent(nextIface)}`, { method: "POST" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        state.selectedIp = null;
+        els.deviceChartCard.classList.remove("active");
+        await fetchStats();
+      } catch (err) {
+        els.metaInfo.textContent = t("connErr")(err.message || "switch failed");
+      } finally {
+        els.ifaceApplyBtn.disabled = false;
+        els.ifaceApplyBtn.textContent = t("ifaceApply");
+      }
+    });
+    function setLanguage(nextLang) {
+      if (!LANG_ORDER.includes(nextLang) || nextLang === state.lang) return;
+      state.lang = nextLang;
+      localStorage.setItem("lanstat_lang", state.lang);
+      applyLanguage();
+      if (state.latestData) renderAll(state.latestData);
+    }
+    els.langSwitch.addEventListener("click", (e) => {
+      const btn = e.target.closest(".seg-opt");
+      if (!btn) return;
+      setLanguage(btn.dataset.lang);
+    });
+    els.langSwitch.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      const cur = Math.max(0, LANG_ORDER.indexOf(state.lang));
+      const nextIdx = (cur + (e.key === "ArrowRight" ? 1 : -1) + LANG_ORDER.length) % LANG_ORDER.length;
+      setLanguage(LANG_ORDER[nextIdx]);
+      const activeBtn = els.langSwitch.querySelector(`.seg-opt[data-lang="${LANG_ORDER[nextIdx]}"]`);
+      if (activeBtn) activeBtn.focus();
+    });
+    els.helpBtn.addEventListener("click", () => {
+      els.helpModal.classList.add("open");
+    });
+    els.closeHelpBtn.addEventListener("click", () => {
+      els.helpModal.classList.remove("open");
+    });
+    els.helpModal.addEventListener("click", (e) => {
+      if (e.target === els.helpModal) els.helpModal.classList.remove("open");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") els.helpModal.classList.remove("open");
+    });
+    els.privacyBtn.addEventListener("click", () => {
+      state.privacy = !state.privacy;
+      localStorage.setItem("lanstat_privacy", state.privacy ? "1" : "0");
+      syncPrivacyBtn();
+      if (state.latestData) {
+        renderDeviceChart(state.latestData);
+        renderTable();
+      }
+    });
+    els.pauseBtn.addEventListener("click", () => {
+      state.paused = !state.paused;
+      els.pauseBtn.textContent = state.paused ? t("resume") : t("pause");
+      els.statusDot.className = state.paused ? "status-dot paused" : "status-dot";
+      if (!state.paused) poll();
+    });
+    function setRange(nextRange) {
+      if (!RANGE_ORDER.includes(nextRange) || nextRange === state.range) return;
+      state.range = nextRange;
+      const idx = Math.max(0, RANGE_ORDER.indexOf(state.range));
+      els.rangeTabs.dataset.idx = String(idx);
+      els.rangeOpts.forEach((btn) => {
+        const active = btn.dataset.range === state.range;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-checked", active ? "true" : "false");
+        btn.tabIndex = active ? 0 : -1;
+      });
+      if (state.latestData) renderGlobalChart(state.latestData);
+    }
+    els.rangeTabs.addEventListener("click", (e) => {
+      const btn = e.target.closest(".seg-opt");
+      if (!btn) return;
+      setRange(btn.dataset.range);
+    });
+    els.rangeTabs.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      const cur = Math.max(0, RANGE_ORDER.indexOf(state.range));
+      const nextIdx = (cur + (e.key === "ArrowRight" ? 1 : -1) + RANGE_ORDER.length) % RANGE_ORDER.length;
+      setRange(RANGE_ORDER[nextIdx]);
+      const activeBtn = els.rangeTabs.querySelector(`.seg-opt[data-range="${RANGE_ORDER[nextIdx]}"]`);
+      if (activeBtn) activeBtn.focus();
+    });
+    els.searchInput.addEventListener("input", (e) => {
+      state.search = e.target.value;
+      renderTable();
+    });
+    els.groupMacBtn.addEventListener("click", () => {
+      state.groupByMac = !state.groupByMac;
+      localStorage.setItem("lanstat_group_mac", state.groupByMac ? "1" : "0");
+      els.groupMacBtn.classList.toggle("active", state.groupByMac);
+      renderTable();
+    });
+    els.scopeBtn.addEventListener("click", () => {
+      const idx = SCOPE_MODES.indexOf(state.trafficScope);
+      state.trafficScope = SCOPE_MODES[(idx + 1) % SCOPE_MODES.length];
+      localStorage.setItem("lanstat_scope", state.trafficScope);
+      syncScopeBtn();
+      renderTable();
+    });
+    els.ipv4OnlyBtn.addEventListener("click", () => {
+      state.ipv4Only = !state.ipv4Only;
+      els.ipv4OnlyBtn.classList.toggle("active", state.ipv4Only);
+      renderTable();
+    });
+    els.includeRouterBtn.addEventListener("click", () => {
+      state.includeRouter = !state.includeRouter;
+      els.includeRouterBtn.classList.toggle("active", state.includeRouter);
+      renderTable();
+    });
+    els.activeOnlyBtn.addEventListener("click", () => {
+      state.activeOnly = !state.activeOnly;
+      els.activeOnlyBtn.classList.toggle("active", state.activeOnly);
+      renderTable();
+    });
+    els.closeDeviceChart.addEventListener("click", () => {
+      state.selectedIp = null;
+      els.deviceChartCard.style.display = "none";
+      renderTable();
+    });
+
+    document.querySelectorAll("th[data-sort]").forEach((th) => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        if (key === "identity") {
+          const idx = IDENTITY_MODES.findIndex((m) => m.key === state.sortKey && m.desc === state.sortDesc);
+          const next = IDENTITY_MODES[(idx + 1) % IDENTITY_MODES.length];
+          state.sortKey = next.key;
+          state.sortDesc = next.desc;
+        } else if (state.sortKey === key) {
+          state.sortDesc = !state.sortDesc;
+        } else {
+          state.sortKey = key;
+          state.sortDesc = key !== "lastSeen";
+        }
+        updateSortHeaders();
+        renderTable();
+      });
+    });
+
+    els.hostsBody.addEventListener("click", (e) => {
+      const aliasBtn = e.target.closest("[data-alias-ip]");
+      if (aliasBtn) {
+        e.stopPropagation();
+        const ip = aliasBtn.dataset.aliasIp;
+        const next = prompt(t("aliasPrompt")(ip), state.aliases[ip] || "");
+        if (next !== null) {
+          if (next.trim()) state.aliases[ip] = next.trim();
+          else delete state.aliases[ip];
+          localStorage.setItem("lanstat_aliases", JSON.stringify(state.aliases));
+          if (state.latestData) renderAll(state.latestData);
+        }
+        return;
+      }
+      const tr = e.target.closest("tr[data-ip]");
+      if (tr) {
+        if (tr.classList.contains("selected") || state.selectedIp === tr.dataset.ip) {
+          state.selectedIp = null;
+          els.deviceChartCard.style.display = "none";
+          renderTable();
+        } else {
+          state.selectedIp = tr.dataset.ip;
+          renderTable();
+          poll();
+        }
+      }
+    });
+
+    let tipTarget = null;
+    function hideTooltip() {
+      tipTarget = null;
+      els.tooltip.classList.remove("show");
+      els.tooltip.setAttribute("aria-hidden", "true");
+    }
+    function showTooltip(el) {
+      const text = el && el.getAttribute("data-tip");
+      if (!text) {
+        hideTooltip();
+        return;
+      }
+      tipTarget = el;
+      els.tooltip.textContent = text;
+      els.tooltip.setAttribute("aria-hidden", "false");
+      els.tooltip.classList.add("show");
+      const rect = el.getBoundingClientRect();
+      const tipRect = els.tooltip.getBoundingClientRect();
+      let left = rect.left + rect.width / 2 - tipRect.width / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+      let top = rect.bottom + 8;
+      if (top + tipRect.height > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - tipRect.height - 8);
+      }
+      els.tooltip.style.left = `${Math.round(left)}px`;
+      els.tooltip.style.top = `${Math.round(top)}px`;
+    }
+    const supportsHover = window.matchMedia ? window.matchMedia("(hover: hover)").matches : true;
+    document.addEventListener("mouseover", (e) => {
+      if (!supportsHover) return;
+      const el = e.target.closest("[data-tip]");
+      if (el !== tipTarget) {
+        if (el) showTooltip(el);
+        else hideTooltip();
+      }
+    });
+    document.addEventListener("mouseout", (e) => {
+      if (!tipTarget) return;
+      const next = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest("[data-tip]") : null;
+      if (next !== tipTarget) {
+        if (next) showTooltip(next);
+        else hideTooltip();
+      }
+    });
+    document.addEventListener("focusin", (e) => {
+      const el = e.target.closest("[data-tip]");
+      if (el) showTooltip(el);
+    });
+    document.addEventListener("focusout", hideTooltip);
+    document.addEventListener("pointerdown", hideTooltip);
+    window.addEventListener("scroll", hideTooltip, { passive: true });
+
+    applyLanguage();
+    poll();
+    resetTimer();
+  </script>
+</body>
+</html>

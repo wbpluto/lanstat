@@ -1,0 +1,170 @@
+name: Release Multi-Arch Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-openwrt-ipk:
+    name: OpenWrt 24.10 .ipk (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86-64
+            arch: x86_64
+          - target: mediatek-filogic
+            arch: aarch64_cortex-a53
+          - target: armsr-armv8
+            arch: aarch64_generic
+          - target: ramips-mt7621
+            arch: mipsel_24kc
+          - target: bcm27xx-bcm2709
+            arch: arm_cortex-a7_neon-vfpv4
+          - target: ath79-generic
+            arch: mips_24kc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile OpenWrt .ipk package
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          [ -n "$VER" ] && echo "$VER" | grep -Eq '^[0-9]+\.[0-9]+' || VER="1.0.0"
+          mkdir -p out
+          chmod 777 out
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -v "$PWD/out:/out" \
+            -e VER="$VER" \
+            "openwrt/sdk:${{ matrix.target }}-openwrt-24.10" \
+            bash -euo pipefail -c '
+              cd /builder
+              [ -f ./setup.sh ] && [ ! -d ./scripts ] && ./setup.sh
+              mkdir -p package
+              rm -rf package/lanstat
+              cp -r /src/openwrt-package/lanstat package/lanstat
+              make defconfig
+              make package/lanstat/compile \
+                LANSTAT_LOCAL_SRC=/src \
+                PKG_VERSION="$VER" \
+                V=s
+              find bin/packages -name "lanstat_*.ipk" -exec cp -v {} /out/ \;
+            '
+
+      - name: Upload .ipk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipk-${{ matrix.arch }}
+          path: out/*.ipk
+
+  build-openwrt-apk:
+    name: OpenWrt 25.12 .apk (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86-64
+            arch: x86_64
+          - target: mediatek-filogic
+            arch: aarch64_cortex-a53
+          - target: armsr-armv8
+            arch: aarch64_generic
+          - target: ramips-mt7621
+            arch: mipsel_24kc
+          - target: bcm27xx-bcm2709
+            arch: arm_cortex-a7_neon-vfpv4
+          - target: ath79-generic
+            arch: mips_24kc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compile OpenWrt .apk package
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          [ -n "$VER" ] && echo "$VER" | grep -Eq '^[0-9]+\.[0-9]+' || VER="1.0.0"
+          mkdir -p out
+          chmod 777 out
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -v "$PWD/out:/out" \
+            -e VER="$VER" \
+            "openwrt/sdk:${{ matrix.target }}-openwrt-25.12" \
+            bash -euo pipefail -c '
+              cd /builder
+              [ -f ./setup.sh ] && [ ! -d ./scripts ] && ./setup.sh
+              mkdir -p package
+              rm -rf package/lanstat
+              cp -r /src/openwrt-package/lanstat package/lanstat
+              make defconfig
+              make package/lanstat/compile \
+                LANSTAT_LOCAL_SRC=/src \
+                PKG_VERSION="$VER" \
+                V=s
+              find bin/packages -name "lanstat-*.apk" -exec cp -v {} /out/ \;
+            '
+
+      - name: Upload .apk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ matrix.arch }}
+          path: out/*.apk
+
+  build-static:
+    name: Static musl tarball (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64, armv7, mipsel, mips]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Build static package
+        run: make package ARCH=${{ matrix.arch }}
+
+      - name: Upload static tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-${{ matrix.arch }}
+          path: dist/lanstat-${{ matrix.arch }}.tar.gz
+
+  publish:
+    name: Publish GitHub Release
+    needs: [build-openwrt-ipk, build-openwrt-apk, build-static]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
