@@ -1,5 +1,10 @@
 # lanstat
 
+[![最新版本](https://img.shields.io/github/v/release/wbpluto/lanstat?label=Release)](https://github.com/wbpluto/lanstat/releases)
+[![累计下载](https://img.shields.io/github/downloads/wbpluto/lanstat/total?label=Downloads)](https://github.com/wbpluto/lanstat/releases)
+[![Stars](https://img.shields.io/github/stars/wbpluto/lanstat)](https://github.com/wbpluto/lanstat/stargazers)
+[![License](https://img.shields.io/github/license/wbpluto/lanstat)](LICENSE)
+
 **[English](README.md) | [简体中文](README_ZH.md)**
 
 专为 OpenWrt / ImmortalWrt 路由器打造的轻量级纯 C11 实时局域网带宽监控工具，单二进制无外部运行时依赖。

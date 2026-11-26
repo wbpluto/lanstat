@@ -1,5 +1,10 @@
 # lanstat
 
+[![Release](https://img.shields.io/github/v/release/wbpluto/lanstat)](https://github.com/wbpluto/lanstat/releases)
+[![Downloads](https://img.shields.io/github/downloads/wbpluto/lanstat/total)](https://github.com/wbpluto/lanstat/releases)
+[![Stars](https://img.shields.io/github/stars/wbpluto/lanstat)](https://github.com/wbpluto/lanstat/stargazers)
+[![License](https://img.shields.io/github/license/wbpluto/lanstat)](LICENSE)
+
 **[English](README.md) | [简体中文](README_ZH.md)**
 
 Lightweight, single-binary native C11 real-time LAN bandwidth monitor for OpenWrt / ImmortalWrt routers.
